@@ -1,3 +1,22 @@
+# SCOPE NOTE — this PR (ADR-0001) implements the AC-driven core: poll loop +
+# persistence, dry_run gate, real-kick path, allowlist, quarantine,
+# per-MAC override resolution, SIGHUP reload, SIGTERM shutdown.
+#
+# The following keys are present in this example for forward
+# compatibility with PLAN.md but are NOT yet consumed by the loader
+# and have NO runtime effect:
+#   controllers (the daemon is currently driven by FakeControllers in
+#     tests; YAML -> UniFiController construction is a follow-up),
+#   home_assistant (HA notifier built/passed via build_daemon kwarg
+#     instead of constructed from YAML),
+#   scanner.log_level / scanner.log_format,
+#   detection.ap_cu_total_min,
+#   backoff.cooldowns_seconds / backoff.max_kicks_per_hour /
+#     backoff.max_kicks_per_day,
+#   quiet_hours (entire block),
+#   ${VAR} env-interpolation in any value (literal string is stored).
+# These are all flagged in the PR's "Out of scope" section.
+
 controllers:
   - type: unifi
     name: home
