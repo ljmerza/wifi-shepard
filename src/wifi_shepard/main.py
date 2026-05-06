@@ -46,7 +46,7 @@ class Daemon:
             for c in self.controllers
         ]
 
-    async def run(self) -> None:
+    async def run(self) -> int:
         loop = asyncio.get_running_loop()
         loop.add_signal_handler(signal.SIGHUP, self._on_sighup)
         loop.add_signal_handler(signal.SIGTERM, self._on_sigterm)
@@ -56,7 +56,7 @@ class Daemon:
             first = True
             while not self._shutdown.is_set():
                 for scanner in self._scanners:
-                    await scanner.run_once()
+                    await asyncio.wait_for(scanner.run_once(), timeout=5)
                 if first:
                     self.first_cycle_started.set()
                     first = False
@@ -65,12 +65,22 @@ class Daemon:
                     await asyncio.wait_for(self._shutdown.wait(), timeout=interval)
                 except TimeoutError:
                     pass
+            return self.exit_code
         finally:
             for sig in (signal.SIGHUP, signal.SIGTERM):
                 try:
                     loop.remove_signal_handler(sig)
                 except (NotImplementedError, RuntimeError):
                     pass
+            await self.db.close()
+            for controller in self.controllers:
+                close = getattr(controller, "close", None)
+                if close is None:
+                    continue
+                try:
+                    await close()
+                except Exception:
+                    logger.exception("controller_close_failed")
 
     def _on_sighup(self) -> None:
         try:
