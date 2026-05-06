@@ -56,7 +56,7 @@ class Daemon:
             first = True
             while not self._shutdown.is_set():
                 for scanner in self._scanners:
-                    await asyncio.wait_for(scanner.run_once(), timeout=5)
+                    await scanner.run_once()
                 if first:
                     self.first_cycle_started.set()
                     first = False
