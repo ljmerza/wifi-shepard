@@ -1,14 +1,22 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 
 @dataclass(frozen=True)
 class DetectionConfig:
-    tx_rate_kbps_max: int
-    retry_pct_max: int
-    signal_dbm_max: int
+    tx_rate_kbps_max: int = 12000
+    retry_pct_max: int = 30
+    signal_dbm_max: int = -70
+    radios: tuple[str, ...] = ("ng",)
+
+
+@dataclass(frozen=True)
+class ScannerConfig:
+    poll_interval_seconds: int = 60
+    window_samples: int = 5
+    dry_run: bool = True
 
 
 @dataclass(frozen=True)
@@ -21,21 +29,32 @@ class OverrideEntry:
 
 @dataclass(frozen=True)
 class Config:
-    detection: DetectionConfig
+    detection: DetectionConfig = field(default_factory=DetectionConfig)
+    scanner: ScannerConfig = field(default_factory=ScannerConfig)
     overrides: tuple[OverrideEntry, ...] = ()
 
 
 def build_config(
     *,
-    tx_rate_kbps_max: int,
-    retry_pct_max: int,
-    signal_dbm_max: int,
+    tx_rate_kbps_max: int = 12000,
+    retry_pct_max: int = 30,
+    signal_dbm_max: int = -70,
+    radios: tuple[str, ...] = ("ng",),
+    dry_run: bool = True,
+    window_samples: int = 5,
+    poll_interval_seconds: int = 60,
     overrides: list[dict[str, Any]] | tuple[dict[str, Any], ...] = (),
 ) -> Config:
     detection = DetectionConfig(
         tx_rate_kbps_max=tx_rate_kbps_max,
         retry_pct_max=retry_pct_max,
         signal_dbm_max=signal_dbm_max,
+        radios=tuple(radios),
+    )
+    scanner = ScannerConfig(
+        poll_interval_seconds=poll_interval_seconds,
+        window_samples=window_samples,
+        dry_run=dry_run,
     )
     overrides_typed = tuple(OverrideEntry(**o) for o in overrides)
-    return Config(detection=detection, overrides=overrides_typed)
+    return Config(detection=detection, scanner=scanner, overrides=overrides_typed)
