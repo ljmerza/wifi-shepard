@@ -25,8 +25,6 @@ def test_ac_6_per_mac_override_beats_global_default():
     assert overridden["signal_dbm_max"] == -70
 
     other = resolve_thresholds(other_mac, config)
-    assert other["tx_rate_kbps_max"] == 12000, (
-        "non-overridden MAC must use global default"
-    )
+    assert other["tx_rate_kbps_max"] == 12000, "non-overridden MAC must use global default"
     assert other["retry_pct_max"] == 30
     assert other["signal_dbm_max"] == -70

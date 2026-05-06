@@ -37,9 +37,7 @@ overrides: []
 
 
 @pytest.mark.asyncio
-async def test_ac_7_sighup_reloads_valid_yaml_keeps_old_on_invalid(
-    temp_db_path, tmp_path
-):
+async def test_ac_7_sighup_reloads_valid_yaml_keeps_old_on_invalid(temp_db_path, tmp_path):
     from wifi_shepard.main import build_daemon
 
     cfg_path = tmp_path / "config.yaml"
@@ -63,9 +61,7 @@ async def test_ac_7_sighup_reloads_valid_yaml_keeps_old_on_invalid(
         cfg_path.write_text(": :: not valid :: yaml")
         os.kill(os.getpid(), signal.SIGHUP)
         await asyncio.sleep(0.2)
-        assert not daemon.config_reloaded.is_set(), (
-            "config_reloaded must NOT fire on parse failure"
-        )
+        assert not daemon.config_reloaded.is_set(), "config_reloaded must NOT fire on parse failure"
         assert daemon.config.scanner.poll_interval_seconds == 20, (
             "invalid SIGHUP must keep previous config"
         )

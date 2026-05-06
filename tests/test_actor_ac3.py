@@ -7,9 +7,7 @@ from tests.conftest import FakeController, make_client
 
 
 @pytest.mark.asyncio
-async def test_ac_3_real_kick_writes_event_notifies_and_advances_backoff(
-    temp_db_path, fake_ha
-):
+async def test_ac_3_real_kick_writes_event_notifies_and_advances_backoff(temp_db_path, fake_ha):
     from wifi_shepard.config import build_config
     from wifi_shepard.db import Database
     from wifi_shepard.scanner import Scanner
