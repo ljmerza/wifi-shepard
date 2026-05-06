@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
+
+import yaml
 
 
 @dataclass(frozen=True)
@@ -73,4 +76,28 @@ def build_config(
         backoff=backoff,
         overrides=overrides_typed,
         allowlist=tuple(allowlist),
+    )
+
+
+def load_config_from_path(path: Path | str) -> Config:
+    text = Path(path).read_text()
+    data = yaml.safe_load(text)
+    if not isinstance(data, dict):
+        raise ValueError(f"config root must be a YAML mapping, got {type(data).__name__}")
+
+    scanner_data = data.get("scanner") or {}
+    detection_data = data.get("detection") or {}
+    backoff_data = data.get("backoff") or {}
+
+    return build_config(
+        poll_interval_seconds=int(scanner_data.get("poll_interval_seconds", 60)),
+        window_samples=int(scanner_data.get("window_samples", 5)),
+        dry_run=bool(scanner_data.get("dry_run", True)),
+        tx_rate_kbps_max=int(detection_data.get("tx_rate_kbps_max", 12000)),
+        retry_pct_max=int(detection_data.get("retry_pct_max", 30)),
+        signal_dbm_max=int(detection_data.get("signal_dbm_max", -70)),
+        radios=tuple(detection_data.get("radios") or ("ng",)),
+        quarantine_after_kicks=int(backoff_data.get("quarantine_after_kicks", 5)),
+        allowlist=tuple(data.get("allowlist") or ()),
+        overrides=tuple(data.get("overrides") or ()),
     )
