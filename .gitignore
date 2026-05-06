@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+dist/
+build/
+.venv/
+venv/
+
+# Tooling caches
+.ruff_cache/
+.pytest_cache/
+.mypy_cache/
+.pyright/
+.coverage
+htmlcov/
+
+# uv
+uv.lock.bak
+
+# Local state (runtime artifacts the daemon writes)
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+
+# Secrets & local env
+.env
+*.local.env
+
+# Editor / OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# Claude Code per-developer settings
+.claude/settings.local.json
