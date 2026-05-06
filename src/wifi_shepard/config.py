@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -69,7 +70,10 @@ def build_config(
         dry_run=dry_run,
     )
     backoff = BackoffConfig(quarantine_after_kicks=quarantine_after_kicks)
-    overrides_typed = tuple(OverrideEntry(**o) for o in overrides)
+    known = {f.name for f in dataclasses.fields(OverrideEntry)}
+    overrides_typed = tuple(
+        OverrideEntry(**{k: v for k, v in o.items() if k in known}) for o in overrides
+    )
     return Config(
         detection=detection,
         scanner=scanner,
@@ -89,10 +93,13 @@ def load_config_from_path(path: Path | str) -> Config:
     detection_data = data.get("detection") or {}
     backoff_data = data.get("backoff") or {}
 
+    raw_dry_run = scanner_data.get("dry_run", True)
+    dry_run = True if raw_dry_run is None else bool(raw_dry_run)
+
     return build_config(
         poll_interval_seconds=int(scanner_data.get("poll_interval_seconds", 60)),
         window_samples=int(scanner_data.get("window_samples", 5)),
-        dry_run=bool(scanner_data.get("dry_run", True)),
+        dry_run=dry_run,
         tx_rate_kbps_max=int(detection_data.get("tx_rate_kbps_max", 12000)),
         retry_pct_max=int(detection_data.get("retry_pct_max", 30)),
         signal_dbm_max=int(detection_data.get("signal_dbm_max", -70)),

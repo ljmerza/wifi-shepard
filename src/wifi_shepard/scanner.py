@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 from typing import Any
 
 from .actor import Actor
@@ -40,6 +39,16 @@ class Scanner:
             self.backoff = None
             self.actor = None
 
+    def update_config(self, config: Any) -> None:
+        self.config = config
+        self.poll_interval_seconds = config.scanner.poll_interval_seconds
+        if self.scorer is not None:
+            self.scorer.config = config
+        if self.actor is not None:
+            self.actor.config = config
+        if self.backoff is not None:
+            self.backoff.quarantine_after_kicks = config.backoff.quarantine_after_kicks
+
     async def run_once(self) -> None:
         clients = await self.controller.list_wireless_clients()
         for client in clients:
@@ -49,8 +58,3 @@ class Scanner:
             decision = self.scorer.ingest(client)
             if decision is not None:
                 await self.actor.handle(client, decision)
-
-    async def run(self) -> None:
-        while True:
-            await self.run_once()
-            await asyncio.sleep(self.poll_interval_seconds)

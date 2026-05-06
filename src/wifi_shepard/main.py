@@ -95,6 +95,8 @@ class Daemon:
         finally:
             self.config_reload_attempted.set()
         self.config = new_config
+        for scanner in self._scanners:
+            scanner.update_config(new_config)
         self.config_reloaded.set()
 
     def _on_sigterm(self) -> None:
