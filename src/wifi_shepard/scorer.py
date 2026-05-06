@@ -7,14 +7,14 @@ _THRESHOLD_FIELDS = ("tx_rate_kbps_max", "retry_pct_max", "signal_dbm_max")
 
 
 def resolve_thresholds(mac: str, config: Any) -> dict[str, Any]:
-    resolved = {field: getattr(config.detection, field) for field in _THRESHOLD_FIELDS}
+    resolved = {name: getattr(config.detection, name) for name in _THRESHOLD_FIELDS}
     for override in config.overrides:
         if override.mac != mac:
             continue
-        for field in _THRESHOLD_FIELDS:
-            value = getattr(override, field, None)
+        for name in _THRESHOLD_FIELDS:
+            value = getattr(override, name, None)
             if value is not None:
-                resolved[field] = value
+                resolved[name] = value
         break
     return resolved
 
