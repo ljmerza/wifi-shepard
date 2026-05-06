@@ -1,0 +1,56 @@
+controllers:
+  - type: unifi
+    name: home
+    host: 192.168.1.1
+    username: shepard
+    password: ${UNIFI_PASSWORD}
+    site: default
+    verify_ssl: false
+
+home_assistant:
+  url: http://homeassistant:8123
+  token: ${HA_TOKEN}
+  notify_service: mobile_app_pixel
+
+scanner:
+  poll_interval_seconds: 60
+  window_samples: 5
+  log_level: info
+  log_format: human
+  dry_run: true
+
+detection:
+  tx_rate_kbps_max: 12000
+  retry_pct_max: 30
+  signal_dbm_max: -70
+  radios: [ng]
+  ap_cu_total_min: 60
+
+backoff:
+  cooldowns_seconds: [300, 1800, 7200, 43200, 86400]
+  max_kicks_per_hour: 3
+  max_kicks_per_day: 10
+  quarantine_after_kicks: 5
+
+quiet_hours:
+  start: "23:00"
+  end: "07:00"
+  timezone: America/Chicago
+  override_threshold:
+    tx_rate_kbps_max: 2000
+    retry_pct_max: 50
+    ap_cu_total_min: 80
+
+allowlist:
+  - aa:bb:cc:dd:ee:ff
+  - 11:22:33:44:55:66
+
+overrides:
+  - mac: dc:cc:e6:66:86:2b
+    name: "leonardo s22"
+    tx_rate_kbps_max: 6000
+    radios: [ng, na, 6e]
+  - mac: 64:57:25:81:89:ab
+    name: "back bedroom camera"
+    max_kicks_per_day: 3
+    signal_dbm_max: -65
