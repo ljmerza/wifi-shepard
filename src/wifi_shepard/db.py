@@ -21,6 +21,15 @@ CREATE TABLE IF NOT EXISTS client_samples (
 );
 """
 
+SCHEMA_KICK_EVENTS = """
+CREATE TABLE IF NOT EXISTS kick_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts REAL NOT NULL,
+    mac TEXT NOT NULL,
+    dry_run INTEGER NOT NULL DEFAULT 0
+);
+"""
+
 
 class Database:
     def __init__(self, path: Path | str) -> None:
@@ -32,6 +41,7 @@ class Database:
         self._conn = await aiosqlite.connect(self.path)
         await self._conn.execute("PRAGMA journal_mode=WAL")
         await self._conn.execute(SCHEMA_CLIENT_SAMPLES)
+        await self._conn.execute(SCHEMA_KICK_EVENTS)
         await self._conn.commit()
 
     async def insert_sample(self, client: Any) -> None:
@@ -53,6 +63,15 @@ class Database:
                 client.ap_id,
                 client.ap_cu_total,
             ),
+        )
+        await self._conn.commit()
+
+    async def insert_kick(self, *, mac: str, dry_run: bool) -> None:
+        if self._conn is None:
+            raise RuntimeError("Database.connect() must be called before insert_kick()")
+        await self._conn.execute(
+            "INSERT INTO kick_events (ts, mac, dry_run) VALUES (?, ?, ?)",
+            (time.time(), mac, 1 if dry_run else 0),
         )
         await self._conn.commit()
 

@@ -4,6 +4,7 @@ import asyncio
 from typing import Any
 
 from .actor import Actor
+from .backoff import BackoffManager
 from .scorer import Scorer
 
 
@@ -22,8 +23,20 @@ class Scanner:
         self.poll_interval_seconds = poll_interval_seconds
         self.config = config
         self.ha = ha
-        self.scorer: Scorer | None = Scorer(config) if config is not None else None
-        self.actor: Actor | None = Actor(config, ha) if config is not None else None
+        if config is not None:
+            self.scorer: Scorer | None = Scorer(config)
+            self.backoff: BackoffManager | None = BackoffManager()
+            self.actor: Actor | None = Actor(
+                config=config,
+                controller=controller,
+                db=db,
+                ha=ha,
+                backoff=self.backoff,
+            )
+        else:
+            self.scorer = None
+            self.backoff = None
+            self.actor = None
 
     async def run_once(self) -> None:
         clients = await self.controller.list_wireless_clients()

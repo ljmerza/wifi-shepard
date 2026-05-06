@@ -7,9 +7,20 @@ logger = logging.getLogger("wifi_shepard.actor")
 
 
 class Actor:
-    def __init__(self, config: Any, ha: Any | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        config: Any,
+        controller: Any | None = None,
+        db: Any | None = None,
+        ha: Any | None = None,
+        backoff: Any | None = None,
+    ) -> None:
         self.config = config
+        self.controller = controller
+        self.db = db
         self.ha = ha
+        self.backoff = backoff
 
     async def handle(self, client: Any, thresholds: dict[str, Any]) -> None:
         mac = client.mac
@@ -26,3 +37,10 @@ class Actor:
                 extra={"mac": mac, "thresholds": thresholds, "reason": reason},
             )
             return
+
+        await self.controller.force_reconnect_client(mac)
+        await self.db.insert_kick(mac=mac, dry_run=False)
+        if self.ha is not None:
+            await self.ha.notify(mac, severity="kick")
+        if self.backoff is not None:
+            self.backoff.record_kick(mac)
