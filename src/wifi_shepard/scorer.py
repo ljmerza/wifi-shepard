@@ -50,6 +50,8 @@ class Scorer:
 
     def ingest(self, client: Any) -> dict[str, Any] | None:
         mac = client.mac
+        if mac in self.config.allowlist:
+            return None
         thresholds = resolve_thresholds(mac, self.config)
         radios = self.config.detection.radios
         window = self._window(mac)

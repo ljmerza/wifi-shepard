@@ -32,6 +32,7 @@ class Config:
     detection: DetectionConfig = field(default_factory=DetectionConfig)
     scanner: ScannerConfig = field(default_factory=ScannerConfig)
     overrides: tuple[OverrideEntry, ...] = ()
+    allowlist: tuple[str, ...] = ()
 
 
 def build_config(
@@ -44,6 +45,7 @@ def build_config(
     window_samples: int = 5,
     poll_interval_seconds: int = 60,
     overrides: list[dict[str, Any]] | tuple[dict[str, Any], ...] = (),
+    allowlist: list[str] | tuple[str, ...] = (),
 ) -> Config:
     detection = DetectionConfig(
         tx_rate_kbps_max=tx_rate_kbps_max,
@@ -57,4 +59,9 @@ def build_config(
         dry_run=dry_run,
     )
     overrides_typed = tuple(OverrideEntry(**o) for o in overrides)
-    return Config(detection=detection, scanner=scanner, overrides=overrides_typed)
+    return Config(
+        detection=detection,
+        scanner=scanner,
+        overrides=overrides_typed,
+        allowlist=tuple(allowlist),
+    )
