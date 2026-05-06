@@ -31,6 +31,7 @@ class Daemon:
         self._scanners: list[Scanner] = []
         self.first_cycle_started = asyncio.Event()
         self.config_reloaded = asyncio.Event()
+        self.config_reload_attempted = asyncio.Event()
         self._shutdown = asyncio.Event()
         self.exit_code = 0
 
@@ -85,12 +86,14 @@ class Daemon:
     def _on_sighup(self) -> None:
         try:
             new_config = load_config_from_path(self.config_path)
-        except Exception as exc:
-            logger.error(
+        except Exception:
+            logger.exception(
                 "config_reload_failed",
-                extra={"error": str(exc), "path": str(self.config_path)},
+                extra={"path": str(self.config_path)},
             )
             return
+        finally:
+            self.config_reload_attempted.set()
         self.config = new_config
         self.config_reloaded.set()
 

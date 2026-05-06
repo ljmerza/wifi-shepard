@@ -54,13 +54,14 @@ async def test_ac_7_sighup_reloads_valid_yaml_keeps_old_on_invalid(temp_db_path,
         os.kill(os.getpid(), signal.SIGHUP)
         await asyncio.wait_for(daemon.config_reloaded.wait(), timeout=5)
         daemon.config_reloaded.clear()
+        daemon.config_reload_attempted.clear()
         assert daemon.config.scanner.poll_interval_seconds == 20, (
             "valid SIGHUP must apply new config to next scan cycle"
         )
 
         cfg_path.write_text(": :: not valid :: yaml")
         os.kill(os.getpid(), signal.SIGHUP)
-        await asyncio.sleep(0.2)
+        await asyncio.wait_for(daemon.config_reload_attempted.wait(), timeout=5)
         assert not daemon.config_reloaded.is_set(), "config_reloaded must NOT fire on parse failure"
         assert daemon.config.scanner.poll_interval_seconds == 20, (
             "invalid SIGHUP must keep previous config"
