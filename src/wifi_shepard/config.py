@@ -20,6 +20,11 @@ class ScannerConfig:
 
 
 @dataclass(frozen=True)
+class BackoffConfig:
+    quarantine_after_kicks: int = 5
+
+
+@dataclass(frozen=True)
 class OverrideEntry:
     mac: str
     tx_rate_kbps_max: int | None = None
@@ -31,6 +36,7 @@ class OverrideEntry:
 class Config:
     detection: DetectionConfig = field(default_factory=DetectionConfig)
     scanner: ScannerConfig = field(default_factory=ScannerConfig)
+    backoff: BackoffConfig = field(default_factory=BackoffConfig)
     overrides: tuple[OverrideEntry, ...] = ()
     allowlist: tuple[str, ...] = ()
 
@@ -44,6 +50,7 @@ def build_config(
     dry_run: bool = True,
     window_samples: int = 5,
     poll_interval_seconds: int = 60,
+    quarantine_after_kicks: int = 5,
     overrides: list[dict[str, Any]] | tuple[dict[str, Any], ...] = (),
     allowlist: list[str] | tuple[str, ...] = (),
 ) -> Config:
@@ -58,10 +65,12 @@ def build_config(
         window_samples=window_samples,
         dry_run=dry_run,
     )
+    backoff = BackoffConfig(quarantine_after_kicks=quarantine_after_kicks)
     overrides_typed = tuple(OverrideEntry(**o) for o in overrides)
     return Config(
         detection=detection,
         scanner=scanner,
+        backoff=backoff,
         overrides=overrides_typed,
         allowlist=tuple(allowlist),
     )

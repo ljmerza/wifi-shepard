@@ -38,6 +38,12 @@ class Actor:
             )
             return
 
+        if self.backoff is not None and self.backoff.should_quarantine(mac):
+            if self.ha is not None and not self.backoff.quarantine_notified(mac):
+                await self.ha.notify(mac, severity="quarantine")
+                self.backoff.mark_quarantine_notified(mac)
+            return
+
         await self.controller.force_reconnect_client(mac)
         await self.db.insert_kick(mac=mac, dry_run=False)
         if self.ha is not None:

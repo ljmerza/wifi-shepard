@@ -25,7 +25,9 @@ class Scanner:
         self.ha = ha
         if config is not None:
             self.scorer: Scorer | None = Scorer(config)
-            self.backoff: BackoffManager | None = BackoffManager()
+            self.backoff: BackoffManager | None = BackoffManager(
+                quarantine_after_kicks=config.backoff.quarantine_after_kicks,
+            )
             self.actor: Actor | None = Actor(
                 config=config,
                 controller=controller,
