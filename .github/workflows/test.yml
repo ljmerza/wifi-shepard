@@ -14,7 +14,7 @@ jobs:
         with:
           enable-cache: true
       - name: Sync deps
-        run: uv sync --all-groups
+        run: uv sync --all-extras --all-groups
       - name: Lint
         run: uv run ruff check .
       - name: Format check
