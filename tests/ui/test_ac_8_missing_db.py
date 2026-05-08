@@ -22,9 +22,14 @@ def test_ac_8_missing_db_renders_empty_state(tmp_path: Path) -> None:
     assert response.status_code == 200
     assert devices_response.status_code == 200
 
-    lower = response.text.lower()
-    # Must signal the empty state with a no-data hint, not crash or
-    # show a stack trace. We accept any of these idioms.
-    assert any(marker in lower for marker in ["no data", "empty", "0 ", "nothing", "no clients"]), (
-        "empty-state page must clearly indicate no data is available yet"
+    text = response.text
+    lower = text.lower()
+    # Must render the explicit empty-state paragraph (.empty CSS class)
+    # so a future template change that drops the wording is caught.
+    assert 'class="empty"' in text, (
+        "empty-state page must render the .empty paragraph, not a fallback"
+    )
+    # And the human-readable copy that explains what's missing.
+    assert any(marker in lower for marker in ["no ap saturation", "no clients", "no data"]), (
+        "empty-state copy must explain why no data is shown"
     )

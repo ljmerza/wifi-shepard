@@ -29,9 +29,10 @@ def test_ac_2_devices_list_html_with_kick_counts(seeded_db: Path) -> None:
     assert "state" in lower, "table must surface current backoff state"
     assert "allowlist" in lower, "table must surface allowlist flag"
 
-    # Specific kick counts: MAC_A has 2 kick_events rows, MAC_B has 0.
+    # Specific kick counts: MAC_A has 1 REAL kick (dry-run rows excluded
+    # to match overview()'s semantics), MAC_B has 0.
     # Look for the count inside a <td> to avoid false positives elsewhere.
-    assert ">2</td>" in text, "MAC_A's kick count of 2 must render in a table cell"
+    assert ">1</td>" in text, "MAC_A's real-kick count of 1 must render in a table cell"
     assert ">0</td>" in text, "MAC_B's kick count of 0 must render in a table cell"
 
     # Sortable: header must include a sort affordance.

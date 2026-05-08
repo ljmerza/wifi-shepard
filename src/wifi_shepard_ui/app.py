@@ -54,7 +54,7 @@ def create_app(*, db_path: Path) -> FastAPI:
     # Refuse an empty-string token: it disables auth silently and is almost
     # always an operator typo (cleared the value in wifi-shepard-ui.env).
     raw_token = os.environ.get("WIFI_SHEPARD_UI_TOKEN")
-    if raw_token is not None and raw_token == "":
+    if raw_token == "":
         raise RuntimeError(
             "WIFI_SHEPARD_UI_TOKEN is set to an empty string — refusing to start. "
             "Either unset the variable (no auth) or set a non-empty token."
@@ -70,13 +70,17 @@ def create_app(*, db_path: Path) -> FastAPI:
 
     def _safe_read(fn, default):
         """Run fn(conn) on a fresh read-only connection; return `default` if
-        the database file is absent (AC-8: fresh deploy with no daemon yet)."""
+        the DB file is absent (AC-8: fresh deploy) OR the file exists but
+        the daemon's tables don't yet (daemon mid-startup, schema not yet
+        created — same operator-visible 'empty state' shape)."""
         try:
             conn = _connect(db_path)
         except sqlite3.OperationalError:
             return default
         try:
             return fn(conn)
+        except sqlite3.OperationalError:
+            return default
         finally:
             conn.close()
 

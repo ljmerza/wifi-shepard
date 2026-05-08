@@ -8,7 +8,7 @@
     <tr>
       <th><a href="?sort=mac">MAC</a></th>
       <th><a href="?sort=kicks">Kicks</a></th>
-      <th><a href="?sort=last_bad">Last event</a></th>
+      <th><a href="?sort=last_bad">Last kick</a></th>
       <th><a href="?sort=state">State</a></th>
       <th>Allowlist</th>
     </tr>
@@ -19,9 +19,9 @@
       <td><a href="/devices/{{ row.mac }}">{{ row.mac }}</a></td>
       <td>{{ row.kick_count }}</td>
       <td>
-        {%- if row.last_event_ts -%}
-          {{ row.last_event_ts | int }}
-        {%- else -%}-
+        {%- if row.last_kick_ts -%}
+          {{ row.last_kick_ts | int }}
+        {%- else -%}—
         {%- endif -%}
       </td>
       <td>{{ row.state }}</td>
