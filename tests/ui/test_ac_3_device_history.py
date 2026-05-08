@@ -42,3 +42,30 @@ def test_ac_3_device_history_chronological(seeded_db: Path) -> None:
         "newest-first: real kick (newer) must render above dry-run kick (older); "
         f"got real@{real_pos} dry@{dry_pos}"
     )
+
+
+def test_ac_3_device_history_mac_case_insensitive(seeded_db: Path) -> None:
+    """Regression for review #3: aiounifi/firmware can return MACs in either
+    case. An operator hand-typing /devices/aa:bb:cc:dd:ee:ff must get the
+    same timeline as /devices/AA:BB:CC:DD:EE:FF."""
+    from fastapi.testclient import TestClient
+
+    from wifi_shepard_ui.app import create_app
+
+    app = create_app(db_path=seeded_db)
+    with TestClient(app) as client:
+        upper = client.get("/devices/AA:BB:CC:DD:EE:FF")
+        lower = client.get("/devices/aa:bb:cc:dd:ee:ff")
+        mixed = client.get("/devices/aa:BB:cc:DD:ee:FF")
+
+    assert upper.status_code == 200
+    assert lower.status_code == 200
+    assert mixed.status_code == 200
+
+    # All three must surface the seeded -72 dBm sample, proving they matched
+    # the stored uppercase rows regardless of request case.
+    for resp, label in [(upper, "upper"), (lower, "lower"), (mixed, "mixed")]:
+        assert "-72" in resp.text, (
+            f"{label}-case MAC request must match stored MAC and render the "
+            f"seeded -72dBm sample; got body without -72"
+        )

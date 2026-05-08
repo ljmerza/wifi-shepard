@@ -139,10 +139,16 @@ def device_history(
     mac: str,
     limit: int = 200,
 ) -> list[HistoryEvent]:
-    """Chronological-newest-first merge of client_samples + kick_events for one MAC."""
+    """Chronological-newest-first merge of client_samples + kick_events for one MAC.
+
+    MAC matching is case-insensitive: aiounifi and other backends normalize MAC
+    case inconsistently across firmware versions, and an operator hand-typing
+    a URL shouldn't get a silently-empty timeline.
+    """
     events: list[HistoryEvent] = []
     for ts, dry_run in conn.execute(
-        "SELECT ts, dry_run FROM kick_events WHERE mac = ? ORDER BY ts DESC LIMIT ?",
+        "SELECT ts, dry_run FROM kick_events WHERE mac = ? COLLATE NOCASE "
+        "ORDER BY ts DESC LIMIT ?",
         (mac, limit),
     ):
         if dry_run:
@@ -153,7 +159,8 @@ def device_history(
     for ts, signal, tx_rate, retries, attempts, radio, ap, cu in conn.execute(
         "SELECT ts, signal, tx_rate_kbps, tx_retries, wifi_tx_attempts, "
         "       radio, ap_id, ap_cu_total "
-        "FROM client_samples WHERE mac = ? ORDER BY ts DESC LIMIT ?",
+        "FROM client_samples WHERE mac = ? COLLATE NOCASE "
+        "ORDER BY ts DESC LIMIT ?",
         (mac, limit),
     ):
         retry_pct = (retries / attempts * 100) if attempts else 0
