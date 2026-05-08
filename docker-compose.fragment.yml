@@ -1,0 +1,14 @@
+# Fragment to merge into ../../docker-compose.local.yml under `services:`.
+# `*default-logging` is defined in ../../docker-compose.base.yml — this fragment
+# alone won't validate; it's an inclusion target, not a standalone compose file.
+wifi-shepard:
+  build: ./projects/wifi-shepard
+  container_name: wifi-shepard
+  restart: unless-stopped
+  env_file:
+    - ./env/global.env
+    - ./env/wifi-shepard.env
+  volumes:
+    - ./volumes/wifi-shepard:/data
+    - ./projects/wifi-shepard/config.yaml:/config/config.yaml:ro
+  logging: *default-logging
