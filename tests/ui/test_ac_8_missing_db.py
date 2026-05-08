@@ -25,7 +25,6 @@ def test_ac_8_missing_db_renders_empty_state(tmp_path: Path) -> None:
     lower = response.text.lower()
     # Must signal the empty state with a no-data hint, not crash or
     # show a stack trace. We accept any of these idioms.
-    assert any(
-        marker in lower
-        for marker in ["no data", "empty", "0 ", "nothing", "no clients"]
-    ), "empty-state page must clearly indicate no data is available yet"
+    assert any(marker in lower for marker in ["no data", "empty", "0 ", "nothing", "no clients"]), (
+        "empty-state page must clearly indicate no data is available yet"
+    )
