@@ -22,6 +22,7 @@ QUARANTINE_AT_KICKS: int = 5
 class DeviceRow:
     mac: str
     kick_count: int
+    last_kick_ts: float | None  # newest kick; None if never kicked
     last_event_ts: float | None  # newest of (last kick, last sample)
     state: str
     allowlisted: bool
@@ -95,6 +96,7 @@ def list_devices(
             DeviceRow(
                 mac=mac,
                 kick_count=n_kicks,
+                last_kick_ts=last_kick_ts,
                 last_event_ts=last_event_ts,
                 state=derive_state(kick_count=n_kicks, last_kick_ts=last_kick_ts, now=now),
                 allowlisted=mac.lower() in allowlist_norm,
@@ -104,11 +106,16 @@ def list_devices(
 
 
 def sort_devices(rows: list[DeviceRow], key: str) -> list[DeviceRow]:
-    """Stable sort for a small set of well-known columns."""
+    """Stable sort for a small set of well-known columns.
+
+    'last_bad' sorts by last_kick_ts (the actual bad-window anchor), not by
+    last_event_ts — otherwise a healthy MAC with frequent samples floats to
+    the top and drowns out actually-noisy devices.
+    """
     sorters = {
         "mac": (lambda r: r.mac, False),
         "kicks": (lambda r: r.kick_count, True),
-        "last_bad": (lambda r: r.last_event_ts or 0, True),
+        "last_bad": (lambda r: r.last_kick_ts or 0, True),
         "state": (lambda r: r.state, False),
     }
     keyfn, reverse = sorters.get(key, sorters["mac"])

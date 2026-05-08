@@ -61,6 +61,13 @@ def create_app(*, db_path: Path) -> FastAPI:
         )
     expected_token = raw_token
 
+    # AC-2: surface the allowlist flag per device. The daemon reads its own
+    # allowlist from /config/config.yaml; the UI sidecar gets a parallel
+    # WIFI_SHEPARD_UI_ALLOWLIST env (comma-separated MACs) so it doesn't
+    # need to import from wifi_shepard.config.
+    allowlist_raw = os.environ.get("WIFI_SHEPARD_UI_ALLOWLIST", "")
+    allowlist = {m.strip() for m in allowlist_raw.split(",") if m.strip()}
+
     def _safe_read(fn, default):
         """Run fn(conn) on a fresh read-only connection; return `default` if
         the database file is absent (AC-8: fresh deploy with no daemon yet)."""
@@ -105,7 +112,7 @@ def create_app(*, db_path: Path) -> FastAPI:
 
     @app.get("/devices", response_class=HTMLResponse)
     def devices(request: Request, sort: str = "mac"):
-        rows = _safe_read(lambda c: views.list_devices(c, allowlist=set(), now=time.time()), [])
+        rows = _safe_read(lambda c: views.list_devices(c, allowlist=allowlist, now=time.time()), [])
         rows = views.sort_devices(rows, sort)
         return templates.TemplateResponse(request, "devices.html", {"rows": rows, "sort": sort})
 
