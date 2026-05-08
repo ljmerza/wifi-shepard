@@ -7,12 +7,13 @@ No write paths — see AC-6 in ADR-0002.
 from __future__ import annotations
 
 import os
+import secrets
 import sqlite3
 import time
 from pathlib import Path
 
 from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse, PlainTextResponse
+from fastapi.responses import HTMLResponse, PlainTextResponse, Response
 from fastapi.templating import Jinja2Templates
 
 from wifi_shepard_ui import views
@@ -47,6 +48,25 @@ def _connect(db_path: Path) -> sqlite3.Connection:
 def create_app(*, db_path: Path) -> FastAPI:
     app = FastAPI(title="wifi-shepard-ui", docs_url=None, redoc_url=None)
     templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
+
+    # Snapshot the env var at construction time. Tests monkeypatch the env
+    # and rebuild the app per-case, which matches a real container restart.
+    expected_token = os.environ.get("WIFI_SHEPARD_UI_TOKEN") or None
+
+    @app.middleware("http")
+    async def bearer_token_auth(request: Request, call_next):
+        # /healthz must stay unauthenticated so docker healthcheck works
+        # even when the token is set.
+        if expected_token and request.url.path != "/healthz":
+            header = request.headers.get("Authorization", "")
+            scheme, _, presented = header.partition(" ")
+            if (
+                scheme.lower() != "bearer"
+                or not presented
+                or not secrets.compare_digest(presented, expected_token)
+            ):
+                return Response(status_code=401, content="unauthorized\n")
+        return await call_next(request)
 
     @app.get("/healthz", response_class=PlainTextResponse)
     def healthz() -> str:
