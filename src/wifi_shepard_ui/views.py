@@ -77,10 +77,16 @@ def list_devices(
     allowlist: set[str],
     now: float,
 ) -> list[DeviceRow]:
-    """One row per MAC seen in either table, with derived state + kick count."""
+    """One row per MAC seen in either table, with derived state + kick count.
+
+    Counts and ts come from REAL kicks only (`dry_run=0`); dry-run rows are
+    "would-kicks" the daemon never actually sent. Counting them here would
+    let a never-actually-kicked MAC reach QUARANTINE, contradicting
+    overview() which already filters dry_run=0.
+    """
     kicks: dict[str, tuple[int, float]] = {}
     for mac, n_kicks, last_kick_ts in conn.execute(
-        "SELECT mac, COUNT(*), MAX(ts) FROM kick_events GROUP BY mac"
+        "SELECT mac, COUNT(*), MAX(ts) FROM kick_events WHERE dry_run = 0 GROUP BY mac"
     ):
         kicks[mac] = (n_kicks, last_kick_ts)
 
