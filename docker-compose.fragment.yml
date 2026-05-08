@@ -12,3 +12,27 @@ wifi-shepard:
     - ./volumes/wifi-shepard:/data
     - ./projects/wifi-shepard/config.yaml:/config/config.yaml:ro
   logging: *default-logging
+
+wifi-shepard-ui:
+  build:
+    context: ./projects/wifi-shepard
+    dockerfile: Dockerfile.ui
+  container_name: wifi-shepard-ui
+  restart: unless-stopped
+  env_file:
+    - ./env/wifi-shepard-ui.env
+  environment:
+    - WIFI_SHEPARD_DB_PATH=/data/state.db
+  volumes:
+    - ./volumes/wifi-shepard:/data:ro
+  expose:
+    - "8080"
+  healthcheck:
+    test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/healthz', timeout=2)"]
+    interval: 30s
+    timeout: 5s
+    retries: 3
+    start_period: 10s
+  depends_on:
+    - wifi-shepard
+  logging: *default-logging
