@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}{{ mac }} — wifi-shepard{% endblock %}
+{% block body %}
+<h1>History — {{ mac }}</h1>
+{% if events %}
+<table>
+  <thead>
+    <tr><th>When (epoch)</th><th>Kind</th><th>Detail</th></tr>
+  </thead>
+  <tbody>
+    {% for ev in events %}
+    <tr class="{{ 'dry' if ev.kind == 'kick_dry_run' else '' }}">
+      <td>{{ ev.ts | int }}</td>
+      <td>
+        {%- if ev.kind == 'kick_dry_run' -%}dry-run kick
+        {%- elif ev.kind == 'kick' -%}kick
+        {%- else -%}sample
+        {%- endif -%}
+      </td>
+      <td>{{ ev.detail }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p class="empty">No events recorded for {{ mac }}.</p>
+{% endif %}
+{% endblock %}

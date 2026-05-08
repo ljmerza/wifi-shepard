@@ -43,6 +43,15 @@ def create_app(*, db_path: Path) -> FastAPI:
         rows = views.sort_devices(rows, sort)
         return templates.TemplateResponse(request, "devices.html", {"rows": rows, "sort": sort})
 
+    @app.get("/devices/{mac}", response_class=HTMLResponse)
+    def device_history(request: Request, mac: str):
+        conn = _connect(db_path)
+        try:
+            events = views.device_history(conn, mac=mac)
+        finally:
+            conn.close()
+        return templates.TemplateResponse(request, "history.html", {"mac": mac, "events": events})
+
     return app
 
 
