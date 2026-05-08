@@ -147,8 +147,7 @@ def device_history(
     """
     events: list[HistoryEvent] = []
     for ts, dry_run in conn.execute(
-        "SELECT ts, dry_run FROM kick_events WHERE mac = ? COLLATE NOCASE "
-        "ORDER BY ts DESC LIMIT ?",
+        "SELECT ts, dry_run FROM kick_events WHERE mac = ? COLLATE NOCASE ORDER BY ts DESC LIMIT ?",
         (mac, limit),
     ):
         if dry_run:
