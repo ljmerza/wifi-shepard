@@ -1,11 +1,31 @@
 from __future__ import annotations
 
 import dataclasses
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 import yaml
+
+
+def _require_sequence(value: Any, key: str) -> list[Any]:
+    if value is None:
+        return []
+    if isinstance(value, (str, bytes)) or not isinstance(value, Sequence):
+        raise ValueError(f"{key} must be a YAML list, got {type(value).__name__}: {value!r}")
+    return list(value)
+
+
+def _require_mapping_items(items: list[Any], key: str) -> list[Mapping[str, Any]]:
+    out: list[Mapping[str, Any]] = []
+    for i, item in enumerate(items):
+        if not isinstance(item, Mapping):
+            raise ValueError(
+                f"{key}[{i}] must be a YAML mapping, got {type(item).__name__}: {item!r}"
+            )
+        out.append(item)
+    return out
 
 
 @dataclass(frozen=True)
@@ -103,6 +123,14 @@ def load_config_from_path(path: Path | str) -> Config:
             f"scanner.dry_run must be a boolean, got {type(raw_dry_run).__name__}: {raw_dry_run!r}"
         )
 
+    radios_raw = detection_data.get("radios")
+    radios_list = _require_sequence(radios_raw, "detection.radios")
+    radios = tuple(radios_list) if radios_list else ("ng",)
+    allowlist = tuple(_require_sequence(data.get("allowlist"), "allowlist"))
+    overrides = tuple(
+        _require_mapping_items(_require_sequence(data.get("overrides"), "overrides"), "overrides")
+    )
+
     return build_config(
         poll_interval_seconds=int(scanner_data.get("poll_interval_seconds", 60)),
         window_samples=int(scanner_data.get("window_samples", 5)),
@@ -110,8 +138,8 @@ def load_config_from_path(path: Path | str) -> Config:
         tx_rate_kbps_max=int(detection_data.get("tx_rate_kbps_max", 12000)),
         retry_pct_max=int(detection_data.get("retry_pct_max", 30)),
         signal_dbm_max=int(detection_data.get("signal_dbm_max", -70)),
-        radios=tuple(detection_data.get("radios") or ("ng",)),
+        radios=radios,
         quarantine_after_kicks=int(backoff_data.get("quarantine_after_kicks", 5)),
-        allowlist=tuple(data.get("allowlist") or ()),
-        overrides=tuple(data.get("overrides") or ()),
+        allowlist=allowlist,
+        overrides=overrides,
     )
