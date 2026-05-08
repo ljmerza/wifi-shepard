@@ -20,6 +20,24 @@ from wifi_shepard_ui.db import open_readonly
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
 
+# AC-6: v1 sidecar is read-only. The test file's grep catches write
+# decorators at source-scan time; this set is the runtime fence checked
+# inside create_app() after every route is registered.
+_FORBIDDEN_HTTP_METHODS = frozenset({"POST", "PUT", "DELETE", "PATCH"})
+
+
+def _assert_no_write_routes(app: FastAPI) -> None:
+    offenders: list[str] = []
+    for route in app.routes:
+        methods = getattr(route, "methods", None) or set()
+        bad = _FORBIDDEN_HTTP_METHODS & {m.upper() for m in methods}
+        if bad:
+            offenders.append(f"{getattr(route, 'path', route)!r} -> {sorted(bad)}")
+    if offenders:
+        raise RuntimeError(
+            "v1 wifi-shepard-ui must be read-only — found write routes: " + "; ".join(offenders)
+        )
+
 
 def _connect(db_path: Path) -> sqlite3.Connection:
     """Open the daemon's SQLite file in strict read-only mode (AC-5)."""
@@ -62,6 +80,7 @@ def create_app(*, db_path: Path) -> FastAPI:
             conn.close()
         return templates.TemplateResponse(request, "history.html", {"mac": mac, "events": events})
 
+    _assert_no_write_routes(app)
     return app
 
 
