@@ -195,14 +195,21 @@ def overview(conn: sqlite3.Connection, *, now: float) -> OverviewStats:
         if derive_state(kick_count=n_kicks, last_kick_ts=last_kick_ts, now=now) == "QUARANTINE":
             quarantined += 1
 
+    # Filter NULL ap_id INSIDE the GROUP BY subquery — otherwise NULL becomes
+    # its own group, takes a slot in the LIMIT 5, and is dropped after the
+    # fact, causing fewer than 5 real APs to surface even when 5 were
+    # available.
     noisy_aps: list[tuple[str, int]] = []
     for ap_id, cu in conn.execute(
         "SELECT ap_id, ap_cu_total FROM client_samples "
-        "WHERE id IN (SELECT MAX(id) FROM client_samples GROUP BY ap_id) "
+        "WHERE id IN ("
+        "  SELECT MAX(id) FROM client_samples "
+        "  WHERE ap_id IS NOT NULL AND ap_cu_total IS NOT NULL "
+        "  GROUP BY ap_id"
+        ") "
         "ORDER BY ap_cu_total DESC LIMIT 5"
     ):
-        if ap_id is not None and cu is not None:
-            noisy_aps.append((ap_id, cu))
+        noisy_aps.append((ap_id, cu))
 
     return OverviewStats(
         total_clients=total_clients,
