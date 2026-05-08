@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}Overview — wifi-shepard{% endblock %}
+{% block body %}
+<h1>Overview</h1>
+
+<div>
+  <span class="tile">
+    <div class="label">Tracked clients</div>
+    <div class="value">{{ stats.total_clients }}</div>
+  </span>
+  <span class="tile">
+    <div class="label">Quarantined</div>
+    <div class="value">{{ stats.quarantined }}</div>
+  </span>
+  <span class="tile">
+    <div class="label">Kicks today</div>
+    <div class="value">{{ stats.kicks_today }}</div>
+  </span>
+  <span class="tile">
+    <div class="label">Kicks this week</div>
+    <div class="value">{{ stats.kicks_this_week }}</div>
+  </span>
+</div>
+
+<h2>Top noisy APs (channel utilization)</h2>
+{% if stats.noisy_aps %}
+<table>
+  <thead><tr><th>AP</th><th>cu_total %</th></tr></thead>
+  <tbody>
+    {% for ap_id, cu in stats.noisy_aps %}
+    <tr><td>{{ ap_id }}</td><td>{{ cu }}</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p class="empty">No AP saturation data yet — daemon has not recorded any client samples.</p>
+{% endif %}
+{% endblock %}
