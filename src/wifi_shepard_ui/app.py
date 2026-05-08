@@ -11,6 +11,7 @@ import os
 import secrets
 import sqlite3
 import time
+from datetime import UTC, datetime
 from pathlib import Path
 
 from fastapi import FastAPI, Request
@@ -21,6 +22,14 @@ from wifi_shepard_ui import views
 from wifi_shepard_ui.db import open_readonly
 
 logger = logging.getLogger(__name__)
+
+
+def _format_ts(ts: float | int | None) -> str:
+    """Render an epoch ts as `YYYY-MM-DD HH:MM:SS UTC`. Returns '—' for None."""
+    if ts is None:
+        return "—"
+    return datetime.fromtimestamp(float(ts), tz=UTC).strftime("%Y-%m-%d %H:%M:%S UTC")
+
 
 # OperationalError messages we treat as "DB not yet populated" — render the
 # empty-state page (AC-8) instead of a 500. Anything else (locked DB, disk
@@ -59,6 +68,7 @@ def _connect(db_path: Path) -> sqlite3.Connection:
 def create_app(*, db_path: Path) -> FastAPI:
     app = FastAPI(title="wifi-shepard-ui", docs_url=None, redoc_url=None)
     templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
+    templates.env.filters["fmt_ts"] = _format_ts
 
     # Snapshot the env var at construction time. Tests monkeypatch the env
     # and rebuild the app per-case, which matches a real container restart.

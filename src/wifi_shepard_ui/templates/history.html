@@ -5,12 +5,12 @@
 {% if events %}
 <table>
   <thead>
-    <tr><th>When (epoch)</th><th>Kind</th><th>Detail</th></tr>
+    <tr><th>When (UTC)</th><th>Kind</th><th>Detail</th></tr>
   </thead>
   <tbody>
     {% for ev in events %}
     <tr class="{{ 'dry' if ev.kind == 'kick_dry_run' else '' }}">
-      <td>{{ ev.ts | int }}</td>
+      <td title="{{ ev.ts | int }}">{{ ev.ts | fmt_ts }}</td>
       <td>
         {%- if ev.kind == 'kick_dry_run' -%}dry-run kick
         {%- elif ev.kind == 'kick' -%}kick

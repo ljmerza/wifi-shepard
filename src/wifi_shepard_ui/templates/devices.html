@@ -18,11 +18,8 @@
     <tr>
       <td><a href="/devices/{{ row.mac }}">{{ row.mac }}</a></td>
       <td>{{ row.kick_count }}</td>
-      <td>
-        {%- if row.last_kick_ts -%}
-          {{ row.last_kick_ts | int }}
-        {%- else -%}—
-        {%- endif -%}
+      <td title="{{ row.last_kick_ts | int if row.last_kick_ts else '' }}">
+        {{ row.last_kick_ts | fmt_ts }}
       </td>
       <td>{{ row.state }}</td>
       <td>{{ "yes" if row.allowlisted else "no" }}</td>
