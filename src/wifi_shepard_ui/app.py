@@ -33,6 +33,15 @@ def create_app(*, db_path: Path) -> FastAPI:
     def healthz() -> str:
         return "ok\n"
 
+    @app.get("/", response_class=HTMLResponse)
+    def overview(request: Request):
+        conn = _connect(db_path)
+        try:
+            stats = views.overview(conn, now=time.time())
+        finally:
+            conn.close()
+        return templates.TemplateResponse(request, "overview.html", {"stats": stats})
+
     @app.get("/devices", response_class=HTMLResponse)
     def devices(request: Request, sort: str = "mac"):
         conn = _connect(db_path)
