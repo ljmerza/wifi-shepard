@@ -16,13 +16,14 @@ from fastapi.responses import HTMLResponse, PlainTextResponse
 from fastapi.templating import Jinja2Templates
 
 from wifi_shepard_ui import views
+from wifi_shepard_ui.db import open_readonly
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
 
 
 def _connect(db_path: Path) -> sqlite3.Connection:
-    """Open the daemon's SQLite file. Read-only enforcement comes in AC-5."""
-    return sqlite3.connect(db_path)
+    """Open the daemon's SQLite file in strict read-only mode (AC-5)."""
+    return open_readonly(db_path)
 
 
 def create_app(*, db_path: Path) -> FastAPI:
