@@ -6,10 +6,18 @@ COPY --from=ghcr.io/astral-sh/uv:0.5 /uv /usr/local/bin/uv
 
 ENV UV_LINK_MODE=copy
 
-COPY pyproject.toml uv.lock ./
-COPY src ./src
+# Non-root runtime user. The UI sidecar only reads /data:ro and serves HTTP
+# on a non-privileged port — root brings nothing useful and removes a class
+# of "what if the kernel namespace mapping is wrong" worries.
+RUN useradd --create-home --uid 1000 --shell /usr/sbin/nologin ui
 
-RUN uv sync --frozen --no-dev --extra ui
+COPY --chown=ui:ui pyproject.toml uv.lock ./
+COPY --chown=ui:ui src ./src
+
+RUN uv sync --frozen --no-dev --extra ui \
+    && chown -R ui:ui /app
+
+USER ui
 
 EXPOSE 8080
 

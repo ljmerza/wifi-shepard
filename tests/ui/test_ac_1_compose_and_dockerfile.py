@@ -44,3 +44,18 @@ def test_ac_1_dockerfile_ui_exists() -> None:
     assert (REPO_ROOT / "Dockerfile.ui").is_file(), (
         "Dockerfile.ui must exist at repo root for the UI sidecar build"
     )
+
+
+def test_ac_1_dockerfile_ui_runs_as_non_root() -> None:
+    """Review #4: the UI sidecar must drop privileges. Static check — does not
+    require a container build."""
+    text = (REPO_ROOT / "Dockerfile.ui").read_text()
+    # USER directive must appear and target a non-root user. We accept either
+    # name or numeric UID; anything that ends in `root` (or `0`) is rejected.
+    user_lines = [line.strip() for line in text.splitlines() if line.strip().startswith("USER ")]
+    assert user_lines, "Dockerfile.ui must include a USER directive (review #4)"
+    # The LAST USER directive is what sticks at runtime.
+    last_user = user_lines[-1].split(None, 1)[1].strip().split(":")[0]
+    assert last_user not in ("root", "0"), (
+        f"Dockerfile.ui must not run as root; final USER is {last_user!r}"
+    )
