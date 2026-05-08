@@ -51,6 +51,11 @@ def derive_state(*, kick_count: int, last_kick_ts: float | None, now: float) -> 
     NORMAL / KICKED / EVALUATING / QUARANTINE. KICK_PENDING is a transient
     in-memory state inside the daemon's scorer — it is never persisted, so
     the UI cannot observe it.
+
+    QUARANTINE is sticky by design: once a MAC crosses
+    QUARANTINE_AT_KICKS, the daemon stops kicking it forever (PLAN.md §4
+    "QUARANTINE: notify, no more kicks"). Operators clear quarantine by
+    editing the daemon's config or wiping kick_events, not via decay.
     """
     if kick_count >= QUARANTINE_AT_KICKS:
         return "QUARANTINE"

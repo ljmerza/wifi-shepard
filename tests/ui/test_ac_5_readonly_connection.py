@@ -16,7 +16,6 @@ def test_ac_5_readonly_connection_rejects_writes(seeded_db: Path) -> None:
                 "INSERT INTO kick_events (ts, mac, dry_run) VALUES (?, ?, ?)",
                 (1.0, "deadbeef", 0),
             )
-            conn.commit()
     finally:
         conn.close()
 
