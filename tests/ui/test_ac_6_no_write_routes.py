@@ -31,9 +31,7 @@ def test_ac_6_no_write_route_decorators_in_ui_source() -> None:
             has_any_get_route = True
         for lineno, line in enumerate(text.splitlines(), start=1):
             if WRITE_VERB_RE.search(line):
-                write_matches.append(
-                    f"{py_file.relative_to(REPO_ROOT)}:{lineno}: {line.strip()}"
-                )
+                write_matches.append(f"{py_file.relative_to(REPO_ROOT)}:{lineno}: {line.strip()}")
 
     # Sanity: AC-6 is a guardrail — it's only meaningful once the UI defines
     # routes. Without GET routes, the negative assertion is vacuous.

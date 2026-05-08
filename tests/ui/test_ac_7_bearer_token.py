@@ -39,10 +39,6 @@ def test_ac_7_token_set_blocks_unauthenticated_and_wrong_token(
         # Wrong scheme
         assert client.get("/", headers={"Authorization": "Basic s3cret"}).status_code == 401
         # Right token
-        assert (
-            client.get("/", headers={"Authorization": "Bearer s3cret"}).status_code == 200
-        )
+        assert client.get("/", headers={"Authorization": "Bearer s3cret"}).status_code == 200
         # Wrong token
-        assert (
-            client.get("/", headers={"Authorization": "Bearer nope"}).status_code == 401
-        )
+        assert client.get("/", headers={"Authorization": "Bearer nope"}).status_code == 401

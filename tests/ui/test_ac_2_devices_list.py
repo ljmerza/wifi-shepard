@@ -37,7 +37,6 @@ def test_ac_2_devices_list_html_with_kick_counts(seeded_db: Path) -> None:
     # Sortable: header must include a sort affordance (link/button/header
     # element) for at least the kick-count column. We accept any of these
     # idioms for the AC.
-    assert any(
-        marker in lower
-        for marker in ["sort=", "?sort", "data-sort", "sortable"]
-    ), "devices table must expose a sort affordance"
+    assert any(marker in lower for marker in ["sort=", "?sort", "data-sort", "sortable"]), (
+        "devices table must expose a sort affordance"
+    )
