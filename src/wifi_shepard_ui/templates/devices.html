@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}Devices — wifi-shepard{% endblock %}
+{% block body %}
+<h1>Devices</h1>
+{% if rows %}
+<table data-sortable="true">
+  <thead>
+    <tr>
+      <th><a href="?sort=mac">MAC</a></th>
+      <th><a href="?sort=kicks">Kicks</a></th>
+      <th><a href="?sort=last_bad">Last event</a></th>
+      <th><a href="?sort=state">State</a></th>
+      <th>Allowlist</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for row in rows %}
+    <tr>
+      <td><a href="/devices/{{ row.mac }}">{{ row.mac }}</a></td>
+      <td>{{ row.kick_count }}</td>
+      <td>
+        {%- if row.last_event_ts -%}
+          {{ row.last_event_ts | int }}
+        {%- else -%}-
+        {%- endif -%}
+      </td>
+      <td>{{ row.state }}</td>
+      <td>{{ "yes" if row.allowlisted else "no" }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p class="empty">No clients tracked yet. The daemon must run for at least one poll cycle for data to appear here.</p>
+{% endif %}
+{% endblock %}
