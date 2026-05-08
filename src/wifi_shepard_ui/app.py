@@ -6,6 +6,7 @@ No write paths — see AC-6 in ADR-0002.
 
 from __future__ import annotations
 
+import logging
 import os
 import secrets
 import sqlite3
@@ -18,6 +19,16 @@ from fastapi.templating import Jinja2Templates
 
 from wifi_shepard_ui import views
 from wifi_shepard_ui.db import open_readonly
+
+logger = logging.getLogger(__name__)
+
+# OperationalError messages we treat as "DB not yet populated" — render the
+# empty-state page (AC-8) instead of a 500. Anything else (locked DB, disk
+# I/O, corruption) is a real failure: log + re-raise so it surfaces.
+_EMPTY_STATE_OPERATIONAL_ERRORS = (
+    "unable to open database",  # file missing / dir not readable
+    "no such table",  # daemon mid-startup, schema not yet created
+)
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
 
@@ -69,20 +80,30 @@ def create_app(*, db_path: Path) -> FastAPI:
     allowlist = {m.strip() for m in allowlist_raw.split(",") if m.strip()}
 
     def _safe_read(fn, default):
-        """Run fn(conn) on a fresh read-only connection; return `default` if
-        the DB file is absent (AC-8: fresh deploy) OR the file exists but
-        the daemon's tables don't yet (daemon mid-startup, schema not yet
-        created — same operator-visible 'empty state' shape)."""
+        """Run fn(conn) on a fresh read-only connection; return `default` for
+        the empty-state cases (AC-8: DB file absent; daemon mid-startup,
+        schema not yet created). Any other OperationalError (locked DB,
+        disk I/O, corruption) is logged and re-raised so it surfaces as a
+        500, not a silently empty page."""
+        conn: sqlite3.Connection | None = None
         try:
-            conn = _connect(db_path)
-        except sqlite3.OperationalError:
-            return default
-        try:
-            return fn(conn)
-        except sqlite3.OperationalError:
-            return default
+            try:
+                conn = _connect(db_path)
+            except sqlite3.OperationalError as e:
+                if any(marker in str(e).lower() for marker in _EMPTY_STATE_OPERATIONAL_ERRORS):
+                    return default
+                logger.exception("wifi-shepard-ui: failed to open %s", db_path)
+                raise
+            try:
+                return fn(conn)
+            except sqlite3.OperationalError as e:
+                if any(marker in str(e).lower() for marker in _EMPTY_STATE_OPERATIONAL_ERRORS):
+                    return default
+                logger.exception("wifi-shepard-ui: query against %s failed", db_path)
+                raise
         finally:
-            conn.close()
+            if conn is not None:
+                conn.close()
 
     @app.middleware("http")
     async def bearer_token_auth(request: Request, call_next):
