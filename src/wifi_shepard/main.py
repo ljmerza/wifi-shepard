@@ -82,6 +82,13 @@ class Daemon:
                     await close()
                 except Exception:
                     logger.exception("controller_close_failed")
+            if self.ha is not None:
+                close = getattr(self.ha, "close", None)
+                if close is not None:
+                    try:
+                        await close()
+                    except Exception:
+                        logger.exception("ha_close_failed")
 
     def _on_sighup(self) -> None:
         try:

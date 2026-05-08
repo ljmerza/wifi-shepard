@@ -11,8 +11,8 @@ class Actor:
         self,
         *,
         config: Any,
-        controller: Any | None = None,
-        db: Any | None = None,
+        controller: Any,
+        db: Any,
         ha: Any | None = None,
         backoff: Any | None = None,
     ) -> None:

@@ -94,7 +94,14 @@ def load_config_from_path(path: Path | str) -> Config:
     backoff_data = data.get("backoff") or {}
 
     raw_dry_run = scanner_data.get("dry_run", True)
-    dry_run = True if raw_dry_run is None else bool(raw_dry_run)
+    if raw_dry_run is None:
+        dry_run = True
+    elif isinstance(raw_dry_run, bool):
+        dry_run = raw_dry_run
+    else:
+        raise ValueError(
+            f"scanner.dry_run must be a boolean, got {type(raw_dry_run).__name__}: {raw_dry_run!r}"
+        )
 
     return build_config(
         poll_interval_seconds=int(scanner_data.get("poll_interval_seconds", 60)),

@@ -40,10 +40,14 @@ class Scanner:
             self.actor = None
 
     def update_config(self, config: Any) -> None:
+        old_window = self.config.scanner.window_samples if self.config is not None else None
         self.config = config
         self.poll_interval_seconds = config.scanner.poll_interval_seconds
         if self.scorer is not None:
-            self.scorer.config = config
+            if old_window != config.scanner.window_samples:
+                self.scorer = Scorer(config)
+            else:
+                self.scorer.config = config
         if self.actor is not None:
             self.actor.config = config
         if self.backoff is not None:
