@@ -13,7 +13,7 @@ import time
 from pathlib import Path
 
 from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse, PlainTextResponse, Response
+from fastapi.responses import HTMLResponse, PlainTextResponse
 from fastapi.templating import Jinja2Templates
 
 from wifi_shepard_ui import views
@@ -51,7 +51,15 @@ def create_app(*, db_path: Path) -> FastAPI:
 
     # Snapshot the env var at construction time. Tests monkeypatch the env
     # and rebuild the app per-case, which matches a real container restart.
-    expected_token = os.environ.get("WIFI_SHEPARD_UI_TOKEN") or None
+    # Refuse an empty-string token: it disables auth silently and is almost
+    # always an operator typo (cleared the value in wifi-shepard-ui.env).
+    raw_token = os.environ.get("WIFI_SHEPARD_UI_TOKEN")
+    if raw_token is not None and raw_token == "":
+        raise RuntimeError(
+            "WIFI_SHEPARD_UI_TOKEN is set to an empty string — refusing to start. "
+            "Either unset the variable (no auth) or set a non-empty token."
+        )
+    expected_token = raw_token
 
     def _safe_read(fn, default):
         """Run fn(conn) on a fresh read-only connection; return `default` if
@@ -71,13 +79,15 @@ def create_app(*, db_path: Path) -> FastAPI:
         # even when the token is set.
         if expected_token and request.url.path != "/healthz":
             header = request.headers.get("Authorization", "")
-            scheme, _, presented = header.partition(" ")
+            parts = header.split(None, 1)
+            scheme = parts[0] if parts else ""
+            presented = parts[1] if len(parts) > 1 else ""
             if (
                 scheme.lower() != "bearer"
                 or not presented
                 or not secrets.compare_digest(presented, expected_token)
             ):
-                return Response(status_code=401, content="unauthorized\n")
+                return PlainTextResponse("unauthorized\n", status_code=401)
         return await call_next(request)
 
     @app.get("/healthz", response_class=PlainTextResponse)
