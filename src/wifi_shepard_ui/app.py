@@ -53,6 +53,18 @@ def create_app(*, db_path: Path) -> FastAPI:
     # and rebuild the app per-case, which matches a real container restart.
     expected_token = os.environ.get("WIFI_SHEPARD_UI_TOKEN") or None
 
+    def _safe_read(fn, default):
+        """Run fn(conn) on a fresh read-only connection; return `default` if
+        the database file is absent (AC-8: fresh deploy with no daemon yet)."""
+        try:
+            conn = _connect(db_path)
+        except sqlite3.OperationalError:
+            return default
+        try:
+            return fn(conn)
+        finally:
+            conn.close()
+
     @app.middleware("http")
     async def bearer_token_auth(request: Request, call_next):
         # /healthz must stay unauthenticated so docker healthcheck works
@@ -72,32 +84,24 @@ def create_app(*, db_path: Path) -> FastAPI:
     def healthz() -> str:
         return "ok\n"
 
+    empty_stats = views.OverviewStats(
+        total_clients=0, quarantined=0, kicks_today=0, kicks_this_week=0, noisy_aps=[]
+    )
+
     @app.get("/", response_class=HTMLResponse)
     def overview(request: Request):
-        conn = _connect(db_path)
-        try:
-            stats = views.overview(conn, now=time.time())
-        finally:
-            conn.close()
+        stats = _safe_read(lambda c: views.overview(c, now=time.time()), empty_stats)
         return templates.TemplateResponse(request, "overview.html", {"stats": stats})
 
     @app.get("/devices", response_class=HTMLResponse)
     def devices(request: Request, sort: str = "mac"):
-        conn = _connect(db_path)
-        try:
-            rows = views.list_devices(conn, allowlist=set(), now=time.time())
-        finally:
-            conn.close()
+        rows = _safe_read(lambda c: views.list_devices(c, allowlist=set(), now=time.time()), [])
         rows = views.sort_devices(rows, sort)
         return templates.TemplateResponse(request, "devices.html", {"rows": rows, "sort": sort})
 
     @app.get("/devices/{mac}", response_class=HTMLResponse)
     def device_history(request: Request, mac: str):
-        conn = _connect(db_path)
-        try:
-            events = views.device_history(conn, mac=mac)
-        finally:
-            conn.close()
+        events = _safe_read(lambda c: views.device_history(c, mac=mac), [])
         return templates.TemplateResponse(request, "history.html", {"mac": mac, "events": events})
 
     _assert_no_write_routes(app)
