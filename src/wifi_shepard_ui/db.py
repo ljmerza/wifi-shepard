@@ -16,10 +16,17 @@ from pathlib import Path
 def open_readonly(db_path: Path | str) -> sqlite3.Connection:
     """Return a sqlite3 Connection that rejects every DML/DDL statement.
 
-    Uses the SQLite URI form `file:...?mode=ro&immutable=0`. `mode=ro`
-    forbids writes at the SQLite VFS level; the additional `query_only`
-    PRAGMA blocks any INSERT/UPDATE/DELETE/CREATE/DROP that might slip
-    through a read-write file mode (defensive — `mode=ro` already does it).
+    Uses the SQLite URI form `file:...?mode=ro` and additionally sets
+    `PRAGMA query_only=ON`. Either fence on its own would catch INSERT/
+    UPDATE/DELETE/CREATE/DROP attempts; combined they survive an
+    unintended fallback to read-write file mode (e.g. if a future
+    deployment forgot the docker `:ro` bind on the volume).
+
+    Note for the WAL case: when the daemon writes in WAL mode, mode=ro
+    readers still need to read the existing -wal/-shm files. POSIX
+    shared-lock acquisition on those files does not require directory
+    write permission, so this works on `/data` mounted `:ro` (verified
+    in tests/ui/test_wal_compat.py).
     """
     db_path = Path(db_path)
     uri = f"file:{db_path}?mode=ro"

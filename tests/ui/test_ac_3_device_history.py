@@ -19,23 +19,26 @@ def test_ac_3_device_history_chronological(seeded_db: Path) -> None:
     text = response.text
     lower = text.lower()
 
-    # Some indication of a kick event
-    assert "kick" in lower, "history must surface kick events"
     # Dry-run rows must be visually distinguished from real kicks
-    assert "dry" in lower or "would" in lower, (
-        "dry-run kick rows must be labeled distinctly from real kicks"
-    )
+    assert "dry-run kick" in lower, "dry-run kick rows must be labeled distinctly from real kicks"
     # Sample data (signal/RSSI) from client_samples must also appear
     assert any(marker in lower for marker in ["signal", "rssi", "dbm"]), (
         "history must include client_samples context (signal/RSSI)"
     )
 
-    # Chronological: with seeded data, the dry-run kick (older) appears
-    # before the real kick (newer) when reading top-to-bottom in newest-first
-    # order, OR after in oldest-first order. Either is acceptable as long as
-    # the order is monotonic in timestamp. We assert by checking that the
-    # *positions* of the two markers in the text reflect a consistent order
-    # with the rest of the timeline.
-    dry_pos = lower.find("dry-run") if "dry-run" in lower else lower.find("dry")
-    # If we got this far, both markers exist; the test checks them being non -1
-    assert dry_pos >= 0, "dry-run marker must be findable in the rendered timeline"
+    # Specific seeded values: signals were -72/-75/-78 dBm. At least one must
+    # render — proves the route actually reads client_samples, not just a stub.
+    assert any(s in text for s in ["-72", "-75", "-78"]), (
+        "at least one seeded signal value (-72/-75/-78) must render"
+    )
+
+    # Newest-first ordering: real kick (ts-90, newer) renders above dry-run
+    # kick (ts-150, older). This proves device_history() actually sorts ts
+    # DESC; a no-op sorter would not satisfy this.
+    real_pos = lower.find(">kick<")  # the bare-"kick" cell is the real kick
+    dry_pos = lower.find("dry-run kick")
+    assert real_pos > 0 and dry_pos > 0
+    assert real_pos < dry_pos, (
+        "newest-first: real kick (newer) must render above dry-run kick (older); "
+        f"got real@{real_pos} dry@{dry_pos}"
+    )
