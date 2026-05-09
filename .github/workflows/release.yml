@@ -7,21 +7,30 @@ on:
     types: [published]
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
   tests:
+    permissions:
+      contents: read
     uses: ljmerza/misc-actions/.github/workflows/python-tests.yml@v2
     with:
       python-version: "3.12"
       coverage-source: wifi_shepard,wifi_shepard_ui
+    secrets: inherit
 
   release-daemon:
     needs: tests
+    permissions:
+      contents: read
+      packages: write
+      attestations: write
+      id-token: write
     uses: ljmerza/misc-actions/.github/workflows/docker-release.yml@v2
     with:
       image-name: ghcr.io/${{ github.repository_owner }}/wifi-shepard
+    secrets: inherit
 
   release-ui:
     needs: tests
