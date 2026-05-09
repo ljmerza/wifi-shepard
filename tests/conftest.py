@@ -29,6 +29,9 @@ class FakeController:
     async def force_reconnect_client(self, mac: str) -> None:
         self.force_reconnect_calls.append(mac)
 
+    async def send_btm_request(self, mac: str, target_bssid: str | None = None) -> None:
+        return None
+
     async def close(self) -> None:
         self.closed = True
 

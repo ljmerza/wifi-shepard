@@ -95,4 +95,75 @@ controllers:
     )
     config = load_config_from_path(cfg)
     assert config.controllers[0].site == "default"
-    assert config.controllers[0].verify_ssl is False
+    assert config.controllers[0].verify_ssl is True, (
+        "verify_ssl must default to True (secure-by-default) when omitted from YAML"
+    )
+
+
+def test_two_controllers_in_yaml_parse_to_two_specs(tmp_path):
+    from wifi_shepard.config import ControllerSpec, load_config_from_path
+
+    cfg = _write(
+        tmp_path,
+        """
+controllers:
+  - type: unifi
+    name: home
+    host: 192.168.1.1
+    username: shepard
+    password: secret
+  - type: unifi
+    name: garage
+    host: 192.168.2.1
+    username: shepard
+    password: secret2
+""",
+    )
+    config = load_config_from_path(cfg)
+    assert len(config.controllers) == 2
+    assert all(isinstance(c, ControllerSpec) for c in config.controllers)
+    assert config.controllers[0].name == "home"
+    assert config.controllers[0].host == "192.168.1.1"
+    assert config.controllers[1].name == "garage"
+    assert config.controllers[1].host == "192.168.2.1"
+    assert config.controllers[0].password != config.controllers[1].password
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="ControllerSpec lacks port field — see review of PR #3 issue #1",
+)
+def test_controllers_port_from_yaml_is_preserved(tmp_path):
+    from wifi_shepard.config import load_config_from_path
+
+    cfg = _write(
+        tmp_path,
+        """
+controllers:
+  - type: unifi
+    name: home
+    host: 192.168.1.1
+    username: shepard
+    password: secret
+    port: 443
+""",
+    )
+    config = load_config_from_path(cfg)
+    assert config.controllers[0].port == 443
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="ControllerSpec uses default dataclass repr — see review of PR #3 issue #2",
+)
+def test_controller_spec_repr_does_not_contain_password():
+    from wifi_shepard.config import ControllerSpec
+
+    spec = ControllerSpec(
+        type="unifi",
+        name="home",
+        host="192.168.1.1",
+        username="shepard",
+        password="super-secret-value-xyz",
+    )
+    assert "super-secret-value-xyz" not in repr(spec)

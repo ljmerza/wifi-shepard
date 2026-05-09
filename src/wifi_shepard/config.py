@@ -90,7 +90,7 @@ class ControllerSpec:
     username: str
     password: str
     site: str = "default"
-    verify_ssl: bool = False
+    verify_ssl: bool = True
 
 
 @dataclass(frozen=True)
@@ -117,7 +117,7 @@ def _build_controller_spec(item: Mapping[str, Any], index: int) -> ControllerSpe
         username=str(item["username"]),
         password=str(item["password"]),
         site=str(item.get("site", "default")),
-        verify_ssl=bool(item.get("verify_ssl", False)),
+        verify_ssl=bool(item.get("verify_ssl", True)),
     )
 
 

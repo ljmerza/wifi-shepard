@@ -100,3 +100,31 @@ scanner:
     assert config.scanner.poll_interval_seconds == 30
     assert config.scanner.window_samples == 3
     assert config.scanner.dry_run is False
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="env var regex is uppercase-only — see review of PR #3 issue #3",
+)
+def test_lowercase_env_var_reference_does_not_silently_pass_through(tmp_path, monkeypatch):
+    from wifi_shepard.config import load_config_from_path
+
+    monkeypatch.setenv("unifi_password", "real-secret")
+    cfg = _write(
+        tmp_path,
+        """
+controllers:
+  - type: unifi
+    name: home
+    host: 192.168.1.1
+    username: shepard
+    password: ${unifi_password}
+""",
+    )
+    # Acceptable outcomes: interpolated to "real-secret", OR raise ValueError.
+    # Unacceptable: silently leaving the literal "${unifi_password}" as the password.
+    try:
+        config = load_config_from_path(cfg)
+    except ValueError:
+        return
+    assert "${" not in config.controllers[0].password

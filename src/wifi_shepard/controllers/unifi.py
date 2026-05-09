@@ -47,7 +47,7 @@ class UniFiController:
         username: str,
         password: str,
         site: str = "default",
-        verify_ssl: bool = False,
+        verify_ssl: bool = True,
         port: int = 8443,
         name: str = "unifi",
     ) -> None:
@@ -159,6 +159,9 @@ class UniFiController:
     async def force_reconnect_client(self, mac: str) -> None:
         unifi = self._controller()
         await unifi.clients.reconnect(mac)
+
+    async def send_btm_request(self, mac: str, target_bssid: str | None = None) -> None:
+        raise NotImplementedError("UniFi backend does not implement BTM in MVP (ADR-0001)")
 
     @staticmethod
     def _build_cu_lookup(unifi: aiounifi.Controller) -> dict[tuple[str, str], int]:
