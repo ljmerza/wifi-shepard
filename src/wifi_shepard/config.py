@@ -1,12 +1,38 @@
 from __future__ import annotations
 
 import dataclasses
+import os
+import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 import yaml
+
+_ENV_VAR_PATTERN = re.compile(r"\$\{([A-Z_][A-Z0-9_]*)\}")
+
+
+def _interpolate_env(text: str) -> str:
+    def repl(match: re.Match[str]) -> str:
+        name = match.group(1)
+        if name not in os.environ:
+            raise ValueError(
+                f"env var ${{{name}}} referenced in config but not set in the environment"
+            )
+        return os.environ[name]
+
+    return _ENV_VAR_PATTERN.sub(repl, text)
+
+
+def _walk_and_interpolate(value: Any) -> Any:
+    if isinstance(value, str):
+        return _interpolate_env(value)
+    if isinstance(value, Mapping):
+        return {k: _walk_and_interpolate(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_walk_and_interpolate(item) for item in value]
+    return value
 
 
 def _require_sequence(value: Any, key: str) -> list[Any]:
@@ -57,12 +83,42 @@ class OverrideEntry:
 
 
 @dataclass(frozen=True)
+class ControllerSpec:
+    type: str
+    name: str
+    host: str
+    username: str
+    password: str
+    site: str = "default"
+    verify_ssl: bool = False
+
+
+@dataclass(frozen=True)
 class Config:
     detection: DetectionConfig = field(default_factory=DetectionConfig)
     scanner: ScannerConfig = field(default_factory=ScannerConfig)
     backoff: BackoffConfig = field(default_factory=BackoffConfig)
     overrides: tuple[OverrideEntry, ...] = ()
     allowlist: tuple[str, ...] = ()
+    controllers: tuple[ControllerSpec, ...] = ()
+
+
+_CONTROLLER_REQUIRED = ("type", "name", "host", "username", "password")
+
+
+def _build_controller_spec(item: Mapping[str, Any], index: int) -> ControllerSpec:
+    for key in _CONTROLLER_REQUIRED:
+        if key not in item or item[key] in (None, ""):
+            raise ValueError(f"controllers[{index}].{key} is required")
+    return ControllerSpec(
+        type=str(item["type"]),
+        name=str(item["name"]),
+        host=str(item["host"]),
+        username=str(item["username"]),
+        password=str(item["password"]),
+        site=str(item.get("site", "default")),
+        verify_ssl=bool(item.get("verify_ssl", False)),
+    )
 
 
 def build_config(
@@ -77,6 +133,7 @@ def build_config(
     quarantine_after_kicks: int = 5,
     overrides: list[dict[str, Any]] | tuple[dict[str, Any], ...] = (),
     allowlist: list[str] | tuple[str, ...] = (),
+    controllers: list[dict[str, Any]] | tuple[dict[str, Any], ...] = (),
 ) -> Config:
     detection = DetectionConfig(
         tx_rate_kbps_max=tx_rate_kbps_max,
@@ -94,12 +151,14 @@ def build_config(
     overrides_typed = tuple(
         OverrideEntry(**{k: v for k, v in o.items() if k in known}) for o in overrides
     )
+    controllers_typed = tuple(_build_controller_spec(c, i) for i, c in enumerate(controllers))
     return Config(
         detection=detection,
         scanner=scanner,
         backoff=backoff,
         overrides=overrides_typed,
         allowlist=tuple(allowlist),
+        controllers=controllers_typed,
     )
 
 
@@ -108,6 +167,8 @@ def load_config_from_path(path: Path | str) -> Config:
     data = yaml.safe_load(text)
     if not isinstance(data, dict):
         raise ValueError(f"config root must be a YAML mapping, got {type(data).__name__}")
+
+    data = _walk_and_interpolate(data)
 
     scanner_data = data.get("scanner") or {}
     detection_data = data.get("detection") or {}
@@ -130,6 +191,11 @@ def load_config_from_path(path: Path | str) -> Config:
     overrides = tuple(
         _require_mapping_items(_require_sequence(data.get("overrides"), "overrides"), "overrides")
     )
+    controllers = tuple(
+        _require_mapping_items(
+            _require_sequence(data.get("controllers"), "controllers"), "controllers"
+        )
+    )
 
     return build_config(
         poll_interval_seconds=int(scanner_data.get("poll_interval_seconds", 60)),
@@ -142,4 +208,5 @@ def load_config_from_path(path: Path | str) -> Config:
         quarantine_after_kicks=int(backoff_data.get("quarantine_after_kicks", 5)),
         allowlist=allowlist,
         overrides=overrides,
+        controllers=controllers,
     )

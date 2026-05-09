@@ -1,0 +1,49 @@
+{
+  "meta": {"rc": "ok"},
+  "data": [
+    {
+      "_id": "client1",
+      "mac": "aa:bb:cc:dd:ee:01",
+      "ap_mac": "ff:ee:dd:cc:bb:aa",
+      "is_wired": false,
+      "radio": "ng",
+      "signal": -78,
+      "tx_rate": 6000,
+      "tx_retries": 60,
+      "wifi_tx_attempts": 100,
+      "essid": "homenet",
+      "hostname": "wled-kitchen",
+      "name": "wled-kitchen",
+      "uptime": 12345
+    },
+    {
+      "_id": "client2",
+      "mac": "aa:bb:cc:dd:ee:02",
+      "ap_mac": "ff:ee:dd:cc:bb:aa",
+      "is_wired": false,
+      "radio": "na",
+      "signal": -55,
+      "tx_rate": 433000,
+      "tx_retries": 5,
+      "wifi_tx_attempts": 1000,
+      "essid": "homenet",
+      "hostname": "phone",
+      "name": "phone",
+      "uptime": 67890
+    },
+    {
+      "_id": "client3",
+      "mac": "aa:bb:cc:dd:ee:03",
+      "ap_mac": "",
+      "is_wired": true,
+      "radio": "",
+      "signal": 0,
+      "tx_rate": 1000000,
+      "tx_retries": 0,
+      "wifi_tx_attempts": 0,
+      "hostname": "desktop",
+      "name": "desktop",
+      "uptime": 99999
+    }
+  ]
+}

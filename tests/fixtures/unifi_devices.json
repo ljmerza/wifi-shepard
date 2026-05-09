@@ -1,0 +1,24 @@
+{
+  "meta": {"rc": "ok"},
+  "data": [
+    {
+      "_id": "ap-1-id",
+      "mac": "ff:ee:dd:cc:bb:aa",
+      "type": "uap",
+      "name": "Front Porch",
+      "model": "U6-Lite",
+      "radio_table_stats": [
+        {"radio": "ng", "cu_total": 72, "bssid": "ff:ee:dd:cc:bb:01"},
+        {"radio": "na", "cu_total": 35, "bssid": "ff:ee:dd:cc:bb:02"}
+      ]
+    },
+    {
+      "_id": "udm-id",
+      "mac": "11:22:33:44:55:66",
+      "type": "udm",
+      "name": "UDM Pro",
+      "model": "UDM-Pro",
+      "radio_table_stats": []
+    }
+  ]
+}
