@@ -26,8 +26,13 @@ uv.lock.bak
 *.db-wal
 
 # Secrets & local env
-.env
+# Real env files used by docker-compose.yml (never commit secrets).
+# *.env.example is unaffected -- its suffix is .example, not .env.
+*.env
 *.local.env
+
+# Runtime state written by the daemon (SQLite WAL, etc.).
+volumes/
 
 # Editor / OS
 .vscode/
