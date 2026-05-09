@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import ssl
 from pathlib import Path
 
 import pytest
@@ -17,10 +18,10 @@ def _load_fixture(name: str) -> dict:
     return json.loads((FIXTURES / name).read_text())
 
 
-def _stub_login(m: aioresponses) -> None:
-    m.get(f"{BASE}/", status=200, content_type="application/json", body="{}")
+def _stub_login(m: aioresponses, base: str = BASE) -> None:
+    m.get(f"{base}/", status=200, content_type="application/json", body="{}")
     m.post(
-        f"{BASE}/api/auth/login",
+        f"{base}/api/auth/login",
         status=200,
         content_type="application/json",
         body=json.dumps({"meta": {"rc": "ok"}, "data": []}),
@@ -277,5 +278,105 @@ async def test_cu_lookup_fails_closed_on_drifted_radio_table_entry():
             await controller.login()
             with pytest.raises(UniFiSchemaError, match="radio_table_stats.cu_total"):
                 await controller.list_wireless_clients()
+    finally:
+        await controller.close()
+
+
+@pytest.mark.asyncio
+async def test_verify_ssl_true_uses_default_ssl_context(monkeypatch):
+    from wifi_shepard.controllers import UniFiController
+
+    sentinel = ssl.create_default_context()
+    calls: list[int] = []
+
+    def fake_default() -> ssl.SSLContext:
+        calls.append(1)
+        return sentinel
+
+    monkeypatch.setattr(ssl, "create_default_context", fake_default)
+
+    controller = UniFiController(
+        host=HOST,
+        username="shepard",
+        password="secret",
+        verify_ssl=True,
+        port=PORT,
+    )
+    try:
+        with aioresponses() as m:
+            _stub_login(m)
+            await controller.login()
+        assert calls == [1], "verify_ssl=True must build a default SSLContext exactly once"
+    finally:
+        await controller.close()
+
+
+@pytest.mark.asyncio
+async def test_verify_ssl_false_does_not_build_ssl_context(monkeypatch):
+    from wifi_shepard.controllers import UniFiController
+
+    calls: list[int] = []
+
+    def fake_default() -> ssl.SSLContext:
+        calls.append(1)
+        return ssl.create_default_context()
+
+    monkeypatch.setattr(ssl, "create_default_context", fake_default)
+
+    controller = UniFiController(
+        host=HOST,
+        username="shepard",
+        password="secret",
+        verify_ssl=False,
+        port=PORT,
+    )
+    try:
+        with aioresponses() as m:
+            _stub_login(m)
+            await controller.login()
+        assert calls == [], "verify_ssl=False must not build an SSLContext"
+    finally:
+        await controller.close()
+
+
+def test_verify_ssl_defaults_to_true_when_kwarg_omitted():
+    from wifi_shepard.controllers import UniFiController
+
+    controller = UniFiController(host=HOST, username="shepard", password="secret")
+    assert controller.verify_ssl is True, (
+        "secure-by-default: omitting verify_ssl must give True, not False"
+    )
+
+
+@pytest.mark.asyncio
+async def test_send_btm_request_raises_not_implemented_in_mvp():
+    from wifi_shepard.controllers import UniFiController
+
+    controller = UniFiController(
+        host=HOST, username="shepard", password="secret", verify_ssl=False, port=PORT
+    )
+    with pytest.raises(NotImplementedError, match="BTM"):
+        await controller.send_btm_request("aa:bb:cc:dd:ee:01")
+
+
+@pytest.mark.asyncio
+async def test_port_kwarg_is_used_in_request_url():
+    from wifi_shepard.controllers import UniFiController
+
+    custom_port = 9999
+    custom_base = f"https://{HOST}:{custom_port}"
+
+    controller = UniFiController(
+        host=HOST,
+        username="shepard",
+        password="secret",
+        port=custom_port,
+    )
+    try:
+        with aioresponses() as m:
+            _stub_login(m, base=custom_base)
+            # If port=8443 (or anything other than 9999) were used, aioresponses
+            # would raise ConnectionError on the unstubbed URL.
+            await controller.login()
     finally:
         await controller.close()

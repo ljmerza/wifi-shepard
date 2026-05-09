@@ -21,10 +21,11 @@ controllers:
     username: shepard
     password: ${UNIFI_PASSWORD}
     site: default
-    # verify_ssl: false skips TLS verification — fine for the typical
-    # self-signed cert on a UDM Pro on a trusted LAN, but if you've
-    # installed a real cert (or run UniFi behind a reverse proxy that
-    # terminates TLS), set this to true.
+    # The code default is verify_ssl: true (full cert + hostname verification).
+    # The typical UDM Pro ships a self-signed cert that won't validate against the
+    # system CA bundle, so a stock UniFi setup needs this explicit opt-out. Once you
+    # install a real cert (or run UniFi behind a TLS-terminating reverse proxy),
+    # remove this line so the secure default takes effect.
     verify_ssl: false
 
 home_assistant:

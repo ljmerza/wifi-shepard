@@ -49,4 +49,12 @@ class Controller(Protocol):
 
     async def force_reconnect_client(self, mac: str) -> None: ...
 
+    async def send_btm_request(self, mac: str, target_bssid: str | None = None) -> None:
+        """Optional 802.11v BTM transition. Backends without BTM support raise NotImplementedError.
+
+        Per ADR-0001 §Decision, no MVP backend implements this; the method exists on the
+        Protocol so a future BTM-capable backend slots in without changing the Protocol shape.
+        """
+        ...
+
     async def close(self) -> None: ...
