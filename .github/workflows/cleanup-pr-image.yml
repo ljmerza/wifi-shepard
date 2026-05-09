@@ -1,0 +1,16 @@
+name: cleanup-pr-image
+
+on:
+  pull_request:
+    types: [closed]
+
+jobs:
+  cleanup-daemon:
+    uses: ljmerza/misc-actions/.github/workflows/cleanup-pr-image.yml@v2
+    with:
+      package-name: wifi-shepard
+
+  cleanup-ui:
+    uses: ljmerza/misc-actions/.github/workflows/cleanup-pr-image.yml@v2
+    with:
+      package-name: wifi-shepard-ui

@@ -8,14 +8,15 @@ import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
-# The fragment uses *default-logging, which is anchored in the monorepo's
-# docker-compose.base.yml. The fragment is NOT a standalone valid YAML
-# document. Prefix a dummy anchor so safe_load resolves it during the test.
+# docker-compose.yml here is a fragment merged into the monorepo's compose graph
+# — services live at the top level and reference *default-logging, which is
+# anchored in docker-compose.base.yml. It is NOT a standalone valid compose
+# doc, so prefix a dummy anchor for safe_load.
 ANCHOR_SHIM = "x-test-anchor: &default-logging {}\n"
 
 
 def _load_fragment() -> dict:
-    fragment_path = REPO_ROOT / "docker-compose.fragment.yml"
+    fragment_path = REPO_ROOT / "docker-compose.yml"
     return yaml.safe_load(ANCHOR_SHIM + fragment_path.read_text())
 
 
