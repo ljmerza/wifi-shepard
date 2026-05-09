@@ -32,6 +32,15 @@ class RadioStats:
 
 @runtime_checkable
 class Controller(Protocol):
+    """Brand-agnostic AP controller surface.
+
+    Identifier convention: ``ClientSnapshot.ap_id``, ``APSnapshot.id``, and the ``ap_id``
+    argument to ``get_ap_radio_stats`` must all use the same per-backend identifier scheme,
+    so that callers can round-trip ``client.ap_id`` -> ``get_ap_radio_stats(ap_id=...)``
+    without an intermediate lookup. The choice of scheme (MAC, vendor _id, hostname, ...)
+    is up to each backend.
+    """
+
     async def list_wireless_clients(self) -> list[ClientSnapshot]: ...
 
     async def list_aps(self) -> list[APSnapshot]: ...

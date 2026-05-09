@@ -30,10 +30,14 @@ def _require(raw: dict[str, Any], key: str, expected_type: type, *, owner: str) 
 
 
 class UniFiController:
-    """UniFi backend wrapping aiounifi 90+.
+    """UniFi backend wrapping aiounifi 85.
 
     Lazily owns its aiohttp session — the session is created in ``login()`` and torn down
     in ``close()``. Callers should always pair the two; ``main.Daemon.run()`` already does.
+
+    Identifier convention: ``ClientSnapshot.ap_id``, ``APSnapshot.id``, and the ``ap_id``
+    argument to ``get_ap_radio_stats`` are all the AP's MAC. UniFi exposes ``ap_mac`` on
+    each client without an extra lookup, so MAC is the cheapest stable join key.
     """
 
     def __init__(
@@ -77,10 +81,11 @@ class UniFiController:
         await self._unifi.login()
 
     async def close(self) -> None:
-        if self._session is not None:
-            await self._session.close()
+        session = self._session
         self._session = None
         self._unifi = None
+        if session is not None:
+            await session.close()
 
     def _controller(self) -> aiounifi.Controller:
         if self._unifi is None:
@@ -123,11 +128,12 @@ class UniFiController:
             raw = device.raw
             if raw.get("type") != "uap":
                 continue
+            mac = _require(raw, "mac", str, owner="device")
             out.append(
                 APSnapshot(
-                    id=_require(raw, "_id", str, owner="device"),
+                    id=mac,
                     name=raw.get("name", ""),
-                    mac=_require(raw, "mac", str, owner="device"),
+                    mac=mac,
                 )
             )
         return out
@@ -137,7 +143,7 @@ class UniFiController:
         await unifi.devices.update()
         for device in unifi.devices.values():
             raw = device.raw
-            if raw.get("_id") != ap_id and raw.get("mac") != ap_id:
+            if raw.get("mac") != ap_id:
                 continue
             stats = raw.get("radio_table_stats") or []
             return [
@@ -161,10 +167,9 @@ class UniFiController:
             raw = device.raw
             if raw.get("type") != "uap":
                 continue
-            ap_mac = raw.get("mac", "")
+            ap_mac = _require(raw, "mac", str, owner="device")
             for entry in raw.get("radio_table_stats") or []:
-                radio = entry.get("radio")
-                cu_total = entry.get("cu_total")
-                if isinstance(radio, str) and isinstance(cu_total, int):
-                    lookup[(ap_mac, radio)] = cu_total
+                radio = _require(entry, "radio", str, owner="radio_table_stats")
+                cu_total = _require(entry, "cu_total", int, owner="radio_table_stats")
+                lookup[(ap_mac, radio)] = cu_total
         return lookup
