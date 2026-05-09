@@ -123,20 +123,6 @@ async def test_force_reconnect_client_posts_kick_sta():
 
     captured: dict = {}
 
-    def capture(url, **kwargs):
-        captured["url"] = str(url)
-        captured["json"] = kwargs.get("json")
-
-        class _Resp:
-            status = 200
-            content_type = "application/json"
-            headers: dict = {}
-
-            async def read(self):
-                return json.dumps({"meta": {"rc": "ok"}, "data": []}).encode()
-
-        return _Resp()
-
     controller = UniFiController(
         host=HOST,
         username="shepard",
@@ -160,5 +146,136 @@ async def test_force_reconnect_client_posts_kick_sta():
 
         assert captured["json"] == {"cmd": "kick-sta", "mac": "aa:bb:cc:dd:ee:01"}
         assert captured["url"].endswith("/cmd/stamgr")
+    finally:
+        await controller.close()
+
+
+@pytest.mark.asyncio
+async def test_list_aps_returns_only_uap_devices_with_mac_as_id():
+    from wifi_shepard.controllers import UniFiController
+
+    devices_fixture = _load_fixture("unifi_devices.json")
+
+    controller = UniFiController(
+        host=HOST,
+        username="shepard",
+        password="secret",
+        port=PORT,
+    )
+    try:
+        with aioresponses() as m:
+            _stub_login(m)
+            m.get(
+                f"{BASE}{SITE_PREFIX}/stat/device",
+                status=200,
+                content_type="application/json",
+                body=json.dumps(devices_fixture),
+            )
+            await controller.login()
+            aps = await controller.list_aps()
+
+        assert len(aps) == 1, "UDM (type=udm) must be filtered out"
+        ap = aps[0]
+        assert ap.mac == "ff:ee:dd:cc:bb:aa"
+        assert ap.id == ap.mac, "id and mac must match (Protocol identifier convention)"
+        assert ap.name == "Front Porch"
+    finally:
+        await controller.close()
+
+
+@pytest.mark.asyncio
+async def test_get_ap_radio_stats_matches_on_mac_and_returns_per_radio_rows():
+    from wifi_shepard.controllers import UniFiController
+
+    devices_fixture = _load_fixture("unifi_devices.json")
+
+    controller = UniFiController(
+        host=HOST,
+        username="shepard",
+        password="secret",
+        port=PORT,
+    )
+    try:
+        with aioresponses() as m:
+            _stub_login(m)
+            m.get(
+                f"{BASE}{SITE_PREFIX}/stat/device",
+                status=200,
+                content_type="application/json",
+                body=json.dumps(devices_fixture),
+            )
+            await controller.login()
+            stats = await controller.get_ap_radio_stats("ff:ee:dd:cc:bb:aa")
+
+        by_radio = {s.radio: s for s in stats}
+        assert set(by_radio) == {"ng", "na"}
+        assert by_radio["ng"].cu_total == 72
+        assert by_radio["na"].cu_total == 35
+        assert by_radio["ng"].bssid == "ff:ee:dd:cc:bb:01"
+    finally:
+        await controller.close()
+
+
+@pytest.mark.asyncio
+async def test_get_ap_radio_stats_unknown_mac_returns_empty():
+    from wifi_shepard.controllers import UniFiController
+
+    devices_fixture = _load_fixture("unifi_devices.json")
+
+    controller = UniFiController(
+        host=HOST,
+        username="shepard",
+        password="secret",
+        port=PORT,
+    )
+    try:
+        with aioresponses() as m:
+            _stub_login(m)
+            m.get(
+                f"{BASE}{SITE_PREFIX}/stat/device",
+                status=200,
+                content_type="application/json",
+                body=json.dumps(devices_fixture),
+            )
+            await controller.login()
+            stats = await controller.get_ap_radio_stats("00:00:00:00:00:00")
+
+        assert stats == []
+    finally:
+        await controller.close()
+
+
+@pytest.mark.asyncio
+async def test_cu_lookup_fails_closed_on_drifted_radio_table_entry():
+    from wifi_shepard.controllers import UniFiController, UniFiSchemaError
+
+    clients_fixture = _load_fixture("unifi_clients.json")
+    devices_fixture = _load_fixture("unifi_devices.json")
+    del devices_fixture["data"][0]["radio_table_stats"][0]["cu_total"]
+
+    controller = UniFiController(
+        host=HOST,
+        username="shepard",
+        password="secret",
+        port=PORT,
+    )
+    try:
+        with aioresponses() as m:
+            _stub_login(m)
+            m.get(
+                f"{BASE}{SITE_PREFIX}/stat/sta",
+                status=200,
+                content_type="application/json",
+                body=json.dumps(clients_fixture),
+            )
+            m.get(
+                f"{BASE}{SITE_PREFIX}/stat/device",
+                status=200,
+                content_type="application/json",
+                body=json.dumps(devices_fixture),
+            )
+            await controller.login()
+            with pytest.raises(UniFiSchemaError, match="radio_table_stats.cu_total"):
+                await controller.list_wireless_clients()
     finally:
         await controller.close()
