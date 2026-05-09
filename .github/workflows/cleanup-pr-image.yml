@@ -6,11 +6,19 @@ on:
 
 jobs:
   cleanup-daemon:
+    permissions:
+      contents: read
+      packages: write
     uses: ljmerza/misc-actions/.github/workflows/cleanup-pr-image.yml@v2
     with:
       package-name: wifi-shepard
+    secrets: inherit
 
   cleanup-ui:
+    permissions:
+      contents: read
+      packages: write
     uses: ljmerza/misc-actions/.github/workflows/cleanup-pr-image.yml@v2
     with:
       package-name: wifi-shepard-ui
+    secrets: inherit
