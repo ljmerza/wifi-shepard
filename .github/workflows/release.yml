@@ -1,0 +1,50 @@
+name: release
+
+on:
+  push:
+    branches: [main]
+  release:
+    types: [published]
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  tests:
+    uses: ljmerza/misc-actions/.github/workflows/python-tests.yml@v2
+    with:
+      python-version: "3.12"
+      coverage-source: wifi_shepard,wifi_shepard_ui
+
+  release-daemon:
+    needs: tests
+    uses: ljmerza/misc-actions/.github/workflows/docker-release.yml@v2
+    with:
+      image-name: ghcr.io/${{ github.repository_owner }}/wifi-shepard
+
+  release-ui:
+    needs: tests
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      attestations: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v6
+      - id: build
+        uses: ljmerza/misc-actions/actions/docker-build-push@v1
+        with:
+          image-name: ghcr.io/${{ github.repository_owner }}/wifi-shepard-ui
+          dockerfile: Dockerfile.ui
+          registry-password: ${{ secrets.GITHUB_TOKEN }}
+          tags: |
+            type=ref,event=tag
+            type=sha,prefix=sha-
+            type=raw,value=main,enable={{is_default_branch}}
+            type=raw,value=latest,enable=${{ github.event_name == 'release' }}
+      - uses: ljmerza/misc-actions/actions/provenance-attest@v1
+        with:
+          image-name: ghcr.io/${{ github.repository_owner }}/wifi-shepard-ui
+          digest: ${{ steps.build.outputs.digest }}

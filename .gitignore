@@ -14,6 +14,7 @@ venv/
 .mypy_cache/
 .pyright/
 .coverage
+coverage.xml
 htmlcov/
 
 # uv
