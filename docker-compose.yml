@@ -1,17 +1,12 @@
-# Fragment to merge into ../../docker-compose.local.yml under `services:`.
-# `*default-logging` is defined in ../../docker-compose.base.yml — this fragment
-# alone won't validate; it's an inclusion target, not a standalone compose file.
 wifi-shepard:
   build: ./projects/wifi-shepard
   container_name: wifi-shepard
   restart: unless-stopped
   env_file:
-    - ./env/global.env
-    - ./env/wifi-shepard.env
+    - ./wifi-shepard.env
   volumes:
     - ./volumes/wifi-shepard:/data
-    - ./projects/wifi-shepard/config.yaml:/config/config.yaml:ro
-  logging: *default-logging
+    - ./volumes/wifi-shepard/config.yaml:/config/config.yaml:ro
 
 wifi-shepard-ui:
   build:
@@ -26,7 +21,7 @@ wifi-shepard-ui:
   volumes:
     - ./volumes/wifi-shepard:/data:ro
   expose:
-    - "8080"
+    - 8683
   healthcheck:
     test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/healthz', timeout=2)"]
     interval: 30s
@@ -35,4 +30,3 @@ wifi-shepard-ui:
     start_period: 10s
   depends_on:
     - wifi-shepard
-  logging: *default-logging
