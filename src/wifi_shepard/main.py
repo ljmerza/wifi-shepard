@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from .config import Config, load_config_from_path
+from .controllers import build_controller
 from .db import Database
 from .scanner import Scanner
 
@@ -19,14 +20,21 @@ class Daemon:
         *,
         config_path: Path,
         db_path: Path,
-        controllers: list[Any],
+        controllers: list[Any] | None = None,
         ha: Any | None = None,
     ) -> None:
         self.config_path = Path(config_path)
         self.db_path = Path(db_path)
+        self.config: Config = load_config_from_path(self.config_path)
+        if controllers is None:
+            if not self.config.controllers:
+                raise ValueError(
+                    "no controllers configured: set controllers: in config.yaml "
+                    "or inject a list via build_daemon(controllers=...)"
+                )
+            controllers = [build_controller(spec) for spec in self.config.controllers]
         self.controllers = list(controllers)
         self.ha = ha
-        self.config: Config = load_config_from_path(self.config_path)
         self.db = Database(self.db_path)
         self._scanners: list[Scanner] = []
         self.first_cycle_started = asyncio.Event()
@@ -53,6 +61,11 @@ class Daemon:
         loop.add_signal_handler(signal.SIGTERM, self._on_sigterm)
         try:
             await self.db.connect()
+            for controller in self.controllers:
+                login = getattr(controller, "login", None)
+                if login is None:
+                    continue
+                await login()
             self._scanners = self._build_scanners()
             first = True
             while not self._shutdown.is_set():
@@ -117,7 +130,7 @@ def build_daemon(
     *,
     config_path: Path,
     db_path: Path,
-    controllers: list[Any],
+    controllers: list[Any] | None = None,
     ha: Any | None = None,
 ) -> Daemon:
     return Daemon(
