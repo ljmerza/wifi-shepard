@@ -55,7 +55,7 @@ def test_open_readonly_against_live_wal_writer(tmp_path: Path) -> None:
 
 @pytest.mark.skipif(sys.platform.startswith("win"), reason="POSIX permission semantics required")
 def test_open_readonly_against_readonly_directory(tmp_path: Path) -> None:
-    """Scenario B: directory mode 0555 (mimics docker :ro bind), WAL writer alive.
+    """Scenario B: directory mode 0500 (mimics docker :ro bind), WAL writer alive.
     Documents what actually happens — this is the production-shaped scenario."""
     dir_path = tmp_path / "data"
     dir_path.mkdir()

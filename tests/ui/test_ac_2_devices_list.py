@@ -40,15 +40,15 @@ def test_ac_2_devices_list_html_with_kick_counts(seeded_db: Path) -> None:
         "devices table must expose a sort affordance"
     )
 
-    # ?sort=kicks must put MAC_A (2 kicks) above MAC_B (0 kicks). This proves
-    # sort_devices() actually reorders rows — without it the test would still
-    # pass on a no-op sorter.
+    # ?sort=kicks must put MAC_A (1 real kick; the dry-run is excluded) above
+    # MAC_B (0 kicks). This proves sort_devices() actually reorders rows —
+    # without it the test would still pass on a no-op sorter.
     assert sorted_response.status_code == 200
     sorted_text = sorted_response.text.lower()
     pos_a = sorted_text.find("aa:bb:cc:dd:ee:ff")
     pos_b = sorted_text.find("11:22:33:44:55:66")
     assert pos_a > 0 and pos_b > 0
     assert pos_a < pos_b, (
-        "?sort=kicks must list MAC_A (2 kicks) before MAC_B (0 kicks); "
+        "?sort=kicks must list MAC_A (1 real kick) before MAC_B (0 kicks); "
         f"got positions {pos_a} vs {pos_b}"
     )
