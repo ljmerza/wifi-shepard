@@ -24,6 +24,10 @@ class Actor:
         self.db = db
         self.ha = ha
         self.backoff = backoff
+        # Tracks in-flight BTM attempts so the next scan cycle can fall back to
+        # deauth under the same attempt_group when the client did not roam
+        # (ADR-0003 AC-4). Keyed by MAC; values: {"group": str, "ap_id": str}.
+        self._pending_btm: dict[str, dict[str, str]] = {}
 
     async def handle(self, client: Any, thresholds: dict[str, Any]) -> None:
         mac = client.mac
@@ -54,6 +58,21 @@ class Actor:
                 self.backoff.mark_quarantine_notified(mac)
             return
 
+        # If we sent BTM on a previous cycle and the client is still bad-state on
+        # the same AP, fall back to deauth under the same attempt_group. The pair
+        # counts as ONE logical kick — record_kick already fired on the BTM cycle.
+        pending = self._pending_btm.get(mac)
+        if pending is not None and pending["ap_id"] == client.ap_id:
+            await self.controller.force_reconnect_client(mac)
+            await self.db.insert_kick(
+                mac=mac,
+                dry_run=False,
+                mechanism="deauth_fallback",
+                attempt_group=pending["group"],
+            )
+            del self._pending_btm[mac]
+            return
+
         if self.backoff is not None:
             self.backoff.record_kick(mac)
         mechanism = resolve_kick_mechanism(mac, self.config)
@@ -61,10 +80,11 @@ class Actor:
         # auto-mode is speculative BTM-then-deauth-fallback (ADR-0003 §Decision):
         # always send BTM first, then on the next scan cycle if the client did not
         # roam, fall back to deauth under the same attempt_group. Recorded as 'btm'
-        # in the row; AC-4's fallback writes the second 'deauth_fallback' row.
+        # in the row; the fallback path above writes the second 'deauth_fallback' row.
         sent_mechanism = "btm" if mechanism in ("btm", "auto") else "deauth"
         if sent_mechanism == "btm":
             await self.controller.send_btm_request(mac, target_bssid=None)
+            self._pending_btm[mac] = {"group": attempt_group, "ap_id": client.ap_id}
         else:
             await self.controller.force_reconnect_client(mac)
         await self.db.insert_kick(
