@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import uuid
 from typing import Any
 
 logger = logging.getLogger("wifi_shepard.actor")
@@ -46,7 +47,13 @@ class Actor:
 
         if self.backoff is not None:
             self.backoff.record_kick(mac)
+        attempt_group = str(uuid.uuid4())
         await self.controller.force_reconnect_client(mac)
-        await self.db.insert_kick(mac=mac, dry_run=False)
+        await self.db.insert_kick(
+            mac=mac,
+            dry_run=False,
+            mechanism="deauth",
+            attempt_group=attempt_group,
+        )
         if self.ha is not None:
             await self.ha.notify(mac, severity="kick")
