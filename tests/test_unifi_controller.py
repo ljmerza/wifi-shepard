@@ -383,8 +383,7 @@ async def test_send_btm_request_posts_to_cmd_devmgr_with_bss_transition_payload(
             None,
         )
         assert post_url is not None, (
-            "expected a POST to a /cmd/devmgr URL; got "
-            f"{[(k[0], str(k[1])) for k in m.requests]}"
+            f"expected a POST to a /cmd/devmgr URL; got {[(k[0], str(k[1])) for k in m.requests]}"
         )
         calls = m.requests[post_url]
         assert len(calls) == 1, f"expected one BTM POST, got {len(calls)}"

@@ -31,9 +31,7 @@ def assert_kick_events_schema(conn: sqlite3.Connection) -> None:
     mid-startup, schema not yet created) and the request-path's _safe_read
     will render the empty-state page — return silently here.
     """
-    cur = conn.execute(
-        "SELECT name FROM sqlite_master WHERE type='table' AND name='kick_events'"
-    )
+    cur = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='kick_events'")
     if cur.fetchone() is None:
         return
     cur = conn.execute("PRAGMA table_info(kick_events)")
@@ -44,6 +42,7 @@ def assert_kick_events_schema(conn: sqlite3.Connection) -> None:
             f"kick_events is missing required columns {sorted(missing)}; "
             f"the daemon's ADR-0003 migration probably hasn't run against this DB yet"
         )
+
 
 # Cooldown schedule from PLAN.md §4. Indexed by 1-based kick count, capped at
 # the last bucket. Mirrored here (not imported from the daemon) on purpose:
