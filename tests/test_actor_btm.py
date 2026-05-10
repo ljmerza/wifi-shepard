@@ -176,3 +176,53 @@ async def test_ac_3_auto_sends_btm_first_no_capability_check_budget_plus_one(
         )
     finally:
         await db.close()
+
+
+@pytest.mark.asyncio
+async def test_ac_9_dry_run_auto_logs_mechanism_without_calling_controller(
+    temp_db_path, fake_ha, caplog
+):
+    """dry_run preempts every action. Even with kick_mechanism=auto, no BTM and no deauth
+    fire — but the would_kick log line must surface the mechanism that *would* have been
+    used so operators auditing the dry-run period see 'mechanism=btm' for capable kicks
+    before they ever flip dry_run=false."""
+    import logging
+
+    from wifi_shepard.config import build_config
+    from wifi_shepard.db import Database
+    from wifi_shepard.scanner import Scanner
+
+    bad_mac = "dc:cc:e6:66:86:2b"
+    fake = FakeController(clients=[_bad_client(bad_mac)])
+    config = build_config(dry_run=True, window_samples=1, kick_mechanism="auto")
+
+    db = Database(temp_db_path)
+    await db.connect()
+    try:
+        scanner = Scanner(controller=fake, db=db, config=config, ha=fake_ha)
+        with caplog.at_level(logging.INFO, logger="wifi_shepard.actor"):
+            await scanner.run_once()
+
+        assert fake.btm_calls == [], (
+            f"AC-9: dry_run must not call send_btm_request; got {fake.btm_calls}"
+        )
+        assert fake.force_reconnect_calls == [], (
+            f"AC-9: dry_run must not call force_reconnect_client; "
+            f"got {fake.force_reconnect_calls}"
+        )
+
+        would_kick_records = [r for r in caplog.records if r.getMessage() == "would_kick"]
+        assert len(would_kick_records) == 1, (
+            f"AC-9: expected exactly one would_kick log line, got {len(would_kick_records)}"
+        )
+        record = would_kick_records[0]
+        assert getattr(record, "mac", None) == bad_mac, (
+            f"AC-9: would_kick must include mac field; got {getattr(record, 'mac', None)!r}"
+        )
+        assert getattr(record, "mechanism", None) == "btm", (
+            f"AC-9: would_kick under kick_mechanism=auto must record mechanism='btm' "
+            f"(auto resolves to BTM-first speculative); got "
+            f"{getattr(record, 'mechanism', None)!r}"
+        )
+    finally:
+        await db.close()
