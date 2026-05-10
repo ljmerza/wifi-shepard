@@ -164,7 +164,9 @@ async def test_ac_3_auto_sends_btm_first_no_capability_check_budget_plus_one(
                 (bad_mac,),
             )
             rows = await cur.fetchall()
-        assert len(rows) == 1, f"AC-3: expected exactly one kick row on first cycle, got {len(rows)}"
+        assert len(rows) == 1, (
+            f"AC-3: expected exactly one kick row on first cycle, got {len(rows)}"
+        )
         assert rows[0][0] == "btm", (
             f"AC-3: auto-mode first attempt records mechanism='btm'; got {rows[0][0]!r}"
         )
