@@ -1,13 +1,34 @@
 from __future__ import annotations
 
 import ssl
+from dataclasses import dataclass
 from typing import Any
 
 import aiohttp
 import aiounifi
+from aiounifi.models.api import ApiRequest
 from aiounifi.models.configuration import Configuration
 
 from .base import APSnapshot, ClientSnapshot, RadioStats
+
+
+@dataclass
+class _BTMRequest(ApiRequest):
+    """Raw 802.11v BSS Transition request for UniFi controllers.
+
+    aiounifi==85 exposes only deauth (cmd: kick-sta on /cmd/stamgr); BTM is
+    not modelled in the typed library. The path /cmd/devmgr with
+    cmd=bss-transition matches the call the UniFi web UI issues for
+    "BSS Transition Roaming". Per ADR-0003 §Risks, this payload is
+    fixture-pinned and Phase 8 integration may invalidate it.
+    """
+
+    @classmethod
+    def create(cls, mac: str, target_bssid: str | None) -> _BTMRequest:
+        data: dict[str, Any] = {"cmd": "bss-transition", "mac": mac.lower()}
+        if target_bssid is not None:
+            data["target_bssid"] = target_bssid.lower()
+        return cls(method="post", path="/cmd/devmgr", data=data)
 
 
 class UniFiSchemaError(RuntimeError):
@@ -161,7 +182,16 @@ class UniFiController:
         await unifi.clients.reconnect(mac)
 
     async def send_btm_request(self, mac: str, target_bssid: str | None = None) -> None:
-        raise NotImplementedError("UniFi backend does not implement BTM in MVP (ADR-0001)")
+        """Send a raw 802.11v BSS Transition Management request to the controller.
+
+        ADR-0003 §Decision Fork D: aiounifi has no typed BTM call, so we issue
+        a raw API request via the same controller object that handles deauth.
+        Failures (non-2xx, schema drift) propagate — Actor catches and records
+        a fail-closed audit row; the next scan cycle's deauth-fallback path
+        (AC-4) keeps kicks working when the BTM endpoint is unavailable.
+        """
+        unifi = self._controller()
+        await unifi.request(_BTMRequest.create(mac, target_bssid))
 
     @staticmethod
     def _build_cu_lookup(unifi: aiounifi.Controller) -> dict[tuple[str, str], int]:
