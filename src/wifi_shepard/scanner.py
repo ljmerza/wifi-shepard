@@ -57,6 +57,9 @@ class Scanner:
         clients = await self.controller.list_wireless_clients()
         for client in clients:
             await self.db.insert_sample(client)
+            if self.actor is not None:
+                # Emit kick_succeeded / kick_no_roam if this MAC was kicked last cycle.
+                self.actor.check_post_kick_outcome(client)
             if self.scorer is None or self.actor is None:
                 continue
             decision = self.scorer.ingest(client)

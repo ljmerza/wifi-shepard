@@ -28,6 +28,10 @@ class Actor:
         # deauth under the same attempt_group when the client did not roam
         # (ADR-0003 AC-4). Keyed by MAC; values: {"group": str, "ap_id": str}.
         self._pending_btm: dict[str, dict[str, str]] = {}
+        # Tracks the ap_id at the moment of each kick so the next scan cycle's
+        # post-kick check can emit kick_succeeded / kick_no_roam (ADR-0003 AC-6).
+        # Keyed by MAC; values: {"ap_id": str, "mechanism": str, "attempt_group": str}.
+        self._pending_outcome: dict[str, dict[str, str]] = {}
 
     async def handle(self, client: Any, thresholds: dict[str, Any]) -> None:
         mac = client.mac
@@ -70,6 +74,12 @@ class Actor:
                 mechanism="deauth_fallback",
                 attempt_group=pending["group"],
             )
+            self._record_pending_outcome(
+                mac=mac,
+                ap_id=client.ap_id,
+                mechanism="deauth_fallback",
+                attempt_group=pending["group"],
+            )
             del self._pending_btm[mac]
             return
 
@@ -93,5 +103,40 @@ class Actor:
             mechanism=sent_mechanism,
             attempt_group=attempt_group,
         )
+        self._record_pending_outcome(
+            mac=mac,
+            ap_id=client.ap_id,
+            mechanism=sent_mechanism,
+            attempt_group=attempt_group,
+        )
         if self.ha is not None:
             await self.ha.notify(mac, severity="kick")
+
+    def _record_pending_outcome(
+        self, *, mac: str, ap_id: str, mechanism: str, attempt_group: str
+    ) -> None:
+        self._pending_outcome[mac] = {
+            "ap_id": ap_id,
+            "mechanism": mechanism,
+            "attempt_group": attempt_group,
+        }
+
+    def check_post_kick_outcome(self, client: Any) -> None:
+        """Emit kick_succeeded / kick_no_roam for any kick this MAC took on the
+        previous cycle (ADR-0003 AC-6). Called once per polled client by Scanner."""
+        pending = self._pending_outcome.pop(client.mac, None)
+        if pending is None:
+            return
+        from_ap = pending["ap_id"]
+        to_ap = client.ap_id
+        message = "kick_succeeded" if from_ap != to_ap else "kick_no_roam"
+        logger.info(
+            message,
+            extra={
+                "mac": client.mac,
+                "from_ap": from_ap,
+                "to_ap": to_ap,
+                "mechanism": pending["mechanism"],
+                "attempt_group": pending["attempt_group"],
+            },
+        )
