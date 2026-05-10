@@ -85,15 +85,11 @@ class Actor:
         # If we sent BTM on a previous cycle and the client is still bad-state on
         # the same AP, fall back to deauth under the same attempt_group. The pair
         # counts as ONE logical kick — record_kick already fired on the BTM cycle.
-        # If client.ap_id is None (UniFi can transiently report this mid-roam),
-        # don't fall back: we can't prove the client stayed put, and an
-        # equality match against a stored None would silently double-charge.
+        # ClientSnapshot.ap_id is non-Optional per the Protocol contract
+        # (controllers/base.py); UniFiController._require raises if ap_mac is
+        # missing, so a None here can't reach this code in production.
         pending = self._pending_btm.get(mac)
-        if (
-            pending is not None
-            and client.ap_id is not None
-            and pending["ap_id"] == client.ap_id
-        ):
+        if pending is not None and pending["ap_id"] == client.ap_id:
             await self.controller.force_reconnect_client(mac)
             await self.db.insert_kick(
                 mac=mac,
@@ -121,14 +117,7 @@ class Actor:
         # kick that didn't happen), no notify (would lie to the operator).
         if sent_mechanism == "btm":
             await self.controller.send_btm_request(mac, target_bssid=None)
-            # Skip pending bookkeeping if ap_id is unknown — a None-vs-real
-            # comparison next cycle would be ambiguous and the post-kick
-            # outcome log can't make a useful from_ap/to_ap claim either.
-            if client.ap_id is not None:
-                self._pending_btm[mac] = {
-                    "group": attempt_group,
-                    "ap_id": client.ap_id,
-                }
+            self._pending_btm[mac] = {"group": attempt_group, "ap_id": client.ap_id}
         else:
             await self.controller.force_reconnect_client(mac)
         if self.backoff is not None:
@@ -139,13 +128,12 @@ class Actor:
             mechanism=sent_mechanism,
             attempt_group=attempt_group,
         )
-        if client.ap_id is not None:
-            self._record_pending_outcome(
-                mac=mac,
-                ap_id=client.ap_id,
-                mechanism=sent_mechanism,
-                attempt_group=attempt_group,
-            )
+        self._record_pending_outcome(
+            mac=mac,
+            ap_id=client.ap_id,
+            mechanism=sent_mechanism,
+            attempt_group=attempt_group,
+        )
         if self.ha is not None:
             await self.ha.notify(mac, severity="kick")
 
