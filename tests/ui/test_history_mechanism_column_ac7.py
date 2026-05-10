@@ -120,3 +120,38 @@ def test_ac_7_history_renders_mechanism_and_groups_attempt_group_pair(make_db) -
         f"AC-7: attempt_group {ATTEMPT_GROUP} must render on BOTH rows of "
         f"the BTM+deauth_fallback pair; got {text.count(ATTEMPT_GROUP)} occurrences"
     )
+
+
+def test_ac_7_sidecar_fails_fast_when_kick_events_lacks_new_columns(tmp_path):
+    """Self-review MAJOR #4: a partial-deploy window (new sidecar image, daemon
+    still on the ADR-0001 schema) must surface as a clear SchemaMismatch at
+    startup, not as opaque 500s on /devices/{mac} at request time."""
+    import sqlite3
+
+    import pytest
+
+    from wifi_shepard_ui.app import create_app
+    from wifi_shepard_ui.views import SchemaMismatch
+
+    db_path = tmp_path / "old_schema.db"
+    conn = sqlite3.connect(db_path)
+    conn.executescript(
+        """
+        CREATE TABLE client_samples (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ts REAL NOT NULL,
+            mac TEXT NOT NULL
+        );
+        CREATE TABLE kick_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ts REAL NOT NULL,
+            mac TEXT NOT NULL,
+            dry_run INTEGER NOT NULL DEFAULT 0
+        );
+        """
+    )
+    conn.commit()
+    conn.close()
+
+    with pytest.raises(SchemaMismatch, match=r"mechanism|attempt_group"):
+        create_app(db_path=db_path)

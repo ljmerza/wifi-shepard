@@ -65,7 +65,32 @@ def _connect(db_path: Path) -> sqlite3.Connection:
     return open_readonly(db_path)
 
 
+def _check_db_schema(db_path: Path) -> None:
+    """Startup smoke-test: if the DB file exists, fail fast on schema drift.
+
+    Empty-state (DB file absent) is fine — the routes' `_safe_read` path
+    handles that. The check exists to surface ADR-0003's coordinated-bump
+    risk loudly at container startup, not per-request.
+    """
+    try:
+        conn = open_readonly(db_path)
+    except sqlite3.OperationalError:
+        # File missing / dir not readable — empty-state path will handle it.
+        return
+    try:
+        try:
+            views.assert_kick_events_schema(conn)
+        except sqlite3.OperationalError as e:
+            # No-such-table = daemon mid-startup; empty-state path will handle it.
+            if "no such table" in str(e).lower():
+                return
+            raise
+    finally:
+        conn.close()
+
+
 def create_app(*, db_path: Path) -> FastAPI:
+    _check_db_schema(db_path)
     app = FastAPI(title="wifi-shepard-ui", docs_url=None, redoc_url=None)
     templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
     templates.env.filters["fmt_ts"] = _format_ts

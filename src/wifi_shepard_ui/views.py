@@ -10,6 +10,41 @@ from __future__ import annotations
 import sqlite3
 from dataclasses import dataclass
 
+# ADR-0002 §Risks + ADR-0003 Phase 6: every column views.py reads from
+# kick_events is listed here so the sidecar can fail fast at startup if the
+# daemon's migration hasn't run yet. Without this, a partial-deploy window
+# (new sidecar image, daemon still on the old schema) surfaces as opaque
+# 500s on /devices/{mac} instead of a clear "schema mismatch" log line.
+_REQUIRED_KICK_EVENTS_COLUMNS: frozenset[str] = frozenset(
+    {"ts", "mac", "dry_run", "mechanism", "attempt_group"}
+)
+
+
+class SchemaMismatch(RuntimeError):
+    """The daemon's kick_events table is missing one or more columns the UI reads."""
+
+
+def assert_kick_events_schema(conn: sqlite3.Connection) -> None:
+    """Raise SchemaMismatch if kick_events EXISTS but lacks any column views.py reads.
+
+    If the table doesn't exist at all, this is the empty-state case (daemon
+    mid-startup, schema not yet created) and the request-path's _safe_read
+    will render the empty-state page — return silently here.
+    """
+    cur = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='kick_events'"
+    )
+    if cur.fetchone() is None:
+        return
+    cur = conn.execute("PRAGMA table_info(kick_events)")
+    present = {row[1] for row in cur.fetchall()}
+    missing = _REQUIRED_KICK_EVENTS_COLUMNS - present
+    if missing:
+        raise SchemaMismatch(
+            f"kick_events is missing required columns {sorted(missing)}; "
+            f"the daemon's ADR-0003 migration probably hasn't run against this DB yet"
+        )
+
 # Cooldown schedule from PLAN.md §4. Indexed by 1-based kick count, capped at
 # the last bucket. Mirrored here (not imported from the daemon) on purpose:
 # the UI is a read-side, decoupled from the daemon's Python tree.
