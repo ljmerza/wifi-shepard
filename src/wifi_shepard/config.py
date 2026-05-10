@@ -205,6 +205,7 @@ def load_config_from_path(path: Path | str) -> Config:
         poll_interval_seconds=int(scanner_data.get("poll_interval_seconds", 60)),
         window_samples=int(scanner_data.get("window_samples", 5)),
         dry_run=dry_run,
+        kick_mechanism=str(scanner_data.get("kick_mechanism", "deauth")),
         tx_rate_kbps_max=int(detection_data.get("tx_rate_kbps_max", 12000)),
         retry_pct_max=int(detection_data.get("retry_pct_max", 30)),
         signal_dbm_max=int(detection_data.get("signal_dbm_max", -70)),
