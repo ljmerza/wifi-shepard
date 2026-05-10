@@ -35,9 +35,16 @@ class Actor:
             "radio": client.radio,
         }
         if self.config.scanner.dry_run:
+            resolved = resolve_kick_mechanism(mac, self.config)
+            would_send = "btm" if resolved in ("btm", "auto") else "deauth"
             logger.info(
                 "would_kick",
-                extra={"mac": mac, "thresholds": thresholds, "reason": reason},
+                extra={
+                    "mac": mac,
+                    "thresholds": thresholds,
+                    "reason": reason,
+                    "mechanism": would_send,
+                },
             )
             return
 
