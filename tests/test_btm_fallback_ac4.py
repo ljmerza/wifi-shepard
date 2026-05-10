@@ -29,9 +29,7 @@ def _bad_client(mac: str, ap_id: str = "ap1") -> object:
 
 
 @pytest.mark.asyncio
-async def test_ac_4_btm_then_deauth_fallback_same_group_budget_unchanged(
-    temp_db_path, fake_ha
-):
+async def test_ac_4_btm_then_deauth_fallback_same_group_budget_unchanged(temp_db_path, fake_ha):
     from wifi_shepard.config import build_config
     from wifi_shepard.db import Database
     from wifi_shepard.scanner import Scanner
@@ -68,8 +66,7 @@ async def test_ac_4_btm_then_deauth_fallback_same_group_budget_unchanged(
             f"got {fake.force_reconnect_calls}"
         )
         assert fake.btm_calls == [(bad_mac, None)], (
-            f"AC-4: cycle 2 must NOT re-send BTM (one BTM per attempt_group); "
-            f"got {fake.btm_calls}"
+            f"AC-4: cycle 2 must NOT re-send BTM (one BTM per attempt_group); got {fake.btm_calls}"
         )
         assert scanner.backoff.kick_count(bad_mac) == 1, (
             f"AC-4: backoff kick_count must STILL be 1 after BTM+deauth fallback "

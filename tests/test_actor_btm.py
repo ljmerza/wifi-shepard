@@ -64,9 +64,7 @@ async def test_ac_1_deauth_default_calls_force_reconnect_and_records_deauth_mech
         assert rows[0][0] == "deauth", (
             f"AC-1: kick_events.mechanism must be 'deauth' for default config; got {rows[0][0]!r}"
         )
-        assert rows[0][1] is None, (
-            f"AC-1: deauth has no target_bssid; got {rows[0][1]!r}"
-        )
+        assert rows[0][1] is None, f"AC-1: deauth has no target_bssid; got {rows[0][1]!r}"
         # Every kick attempt is a logical group; a deauth-only kick is its own group of one.
         # The UUID lets AC-4's fallback path link a BTM+deauth pair under the same group.
         assert rows[0][2] is not None, (
@@ -113,9 +111,7 @@ async def test_ac_2_explicit_btm_calls_send_btm_request_and_records_btm_mechanis
             )
             rows = await cur.fetchall()
         assert len(rows) == 1, f"AC-2: expected exactly one kick row, got {len(rows)}"
-        assert rows[0][0] == "btm", (
-            f"AC-2: kick_events.mechanism must be 'btm'; got {rows[0][0]!r}"
-        )
+        assert rows[0][0] == "btm", f"AC-2: kick_events.mechanism must be 'btm'; got {rows[0][0]!r}"
         assert rows[0][1] is None, (
             f"AC-2: kick_events.target_bssid must be NULL when no target supplied; "
             f"got {rows[0][1]!r}"
@@ -127,9 +123,7 @@ async def test_ac_2_explicit_btm_calls_send_btm_request_and_records_btm_mechanis
 
 
 @pytest.mark.asyncio
-async def test_ac_3_auto_sends_btm_first_no_capability_check_budget_plus_one(
-    temp_db_path, fake_ha
-):
+async def test_ac_3_auto_sends_btm_first_no_capability_check_budget_plus_one(temp_db_path, fake_ha):
     """auto-mode is speculative-BTM-then-deauth-fallback. The first cycle always sends BTM,
     regardless of any controller-exposed capability flag (the empirical probe in ADR-0003
     showed UniFi exposes no usable BTM-capability discriminator). The fallback to deauth
@@ -209,8 +203,7 @@ async def test_ac_9_dry_run_auto_logs_mechanism_without_calling_controller(
             f"AC-9: dry_run must not call send_btm_request; got {fake.btm_calls}"
         )
         assert fake.force_reconnect_calls == [], (
-            f"AC-9: dry_run must not call force_reconnect_client; "
-            f"got {fake.force_reconnect_calls}"
+            f"AC-9: dry_run must not call force_reconnect_client; got {fake.force_reconnect_calls}"
         )
 
         would_kick_records = [r for r in caplog.records if r.getMessage() == "would_kick"]

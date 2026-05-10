@@ -60,12 +60,10 @@ async def test_ac_8_migration_adds_columns_and_backfills_existing_rows(temp_db_p
             f"AC-8: kick_events.mechanism column missing after migration; got {sorted(columns)}"
         )
         assert "target_bssid" in columns, (
-            "AC-8: kick_events.target_bssid column missing after migration; "
-            f"got {sorted(columns)}"
+            f"AC-8: kick_events.target_bssid column missing after migration; got {sorted(columns)}"
         )
         assert "attempt_group" in columns, (
-            "AC-8: kick_events.attempt_group column missing after migration; "
-            f"got {sorted(columns)}"
+            f"AC-8: kick_events.attempt_group column missing after migration; got {sorted(columns)}"
         )
 
         # Pre-existing rows must be preserved AND backfilled with mechanism='deauth'.

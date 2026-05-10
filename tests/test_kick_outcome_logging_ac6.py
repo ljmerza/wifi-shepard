@@ -88,9 +88,7 @@ async def test_ac_6_kick_succeeded_when_client_roamed_to_different_ap(
 
 
 @pytest.mark.asyncio
-async def test_ac_6_kick_no_roam_when_client_stays_on_same_ap(
-    temp_db_path, fake_ha, caplog
-):
+async def test_ac_6_kick_no_roam_when_client_stays_on_same_ap(temp_db_path, fake_ha, caplog):
     from wifi_shepard.config import build_config
     from wifi_shepard.db import Database
     from wifi_shepard.scanner import Scanner
@@ -115,9 +113,7 @@ async def test_ac_6_kick_no_roam_when_client_stays_on_same_ap(
             await scanner.run_once()
 
         no_roam = [r for r in caplog.records if r.getMessage() == "kick_no_roam"]
-        assert len(no_roam) == 1, (
-            f"AC-6: expected one kick_no_roam log line; got {len(no_roam)}"
-        )
+        assert len(no_roam) == 1, f"AC-6: expected one kick_no_roam log line; got {len(no_roam)}"
         record = no_roam[0]
         assert getattr(record, "mac", None) == bad_mac
         assert getattr(record, "from_ap", None) == "ap1"
