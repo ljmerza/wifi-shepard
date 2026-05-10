@@ -9,6 +9,22 @@ from .scorer import resolve_kick_mechanism
 logger = logging.getLogger("wifi_shepard.actor")
 
 
+def _dispatch_mechanism(resolved: str) -> str:
+    """Map a resolved kick_mechanism to the wire-level mechanism the actor sends.
+
+    auto-mode sends BTM speculatively first (ADR-0003 §Decision); the deauth
+    fallback path is handled by the actor's _pending_btm state machine.
+    Unknown values raise — config validation must reject them at parse time."""
+    if resolved in ("btm", "auto"):
+        return "btm"
+    if resolved == "deauth":
+        return "deauth"
+    raise RuntimeError(
+        f"actor: unknown kick_mechanism {resolved!r} (config validation should "
+        "have rejected this at parse time — open a bug)"
+    )
+
+
 class Actor:
     def __init__(
         self,
@@ -44,7 +60,7 @@ class Actor:
         }
         if self.config.scanner.dry_run:
             resolved = resolve_kick_mechanism(mac, self.config)
-            would_send = "btm" if resolved in ("btm", "auto") else "deauth"
+            would_send = _dispatch_mechanism(resolved)
             logger.info(
                 "would_kick",
                 extra={
@@ -91,7 +107,7 @@ class Actor:
         # always send BTM first, then on the next scan cycle if the client did not
         # roam, fall back to deauth under the same attempt_group. Recorded as 'btm'
         # in the row; the fallback path above writes the second 'deauth_fallback' row.
-        sent_mechanism = "btm" if mechanism in ("btm", "auto") else "deauth"
+        sent_mechanism = _dispatch_mechanism(mechanism)
         if sent_mechanism == "btm":
             await self.controller.send_btm_request(mac, target_bssid=None)
             self._pending_btm[mac] = {"group": attempt_group, "ap_id": client.ap_id}

@@ -40,6 +40,21 @@ def test_ac_5_global_default_is_deauth_when_unset():
     )
 
 
+def test_kick_mechanism_invalid_value_fails_closed_at_parse_time():
+    """Self-review hardening: a typo (kick_mechanism: 'dauth') must raise at parse
+    time, not silently downgrade to 'deauth' and erase operator intent. Same for
+    per-MAC overrides."""
+    import pytest
+
+    from wifi_shepard.config import build_config
+
+    with pytest.raises(ValueError, match=r"kick_mechanism must be one of"):
+        build_config(kick_mechanism="dauth")
+
+    with pytest.raises(ValueError, match=r"kick_mechanism must be one of"):
+        build_config(overrides=[{"mac": "aa:bb:cc:dd:ee:ff", "kick_mechanism": "bmt"}])
+
+
 def test_ac_5_yaml_round_trip_threads_kick_mechanism_through_loader(tmp_path):
     """Round-trip through load_config_from_path: a YAML scanner.kick_mechanism: auto
     must reach config.scanner.kick_mechanism and resolve_kick_mechanism. Without this
