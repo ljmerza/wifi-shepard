@@ -88,12 +88,22 @@ class Database:
         )
         await self._conn.commit()
 
-    async def insert_kick(self, *, mac: str, dry_run: bool) -> None:
+    async def insert_kick(
+        self,
+        *,
+        mac: str,
+        dry_run: bool,
+        mechanism: str = "deauth",
+        target_bssid: str | None = None,
+        attempt_group: str | None = None,
+    ) -> None:
         if self._conn is None:
             raise RuntimeError("Database.connect() must be called before insert_kick()")
         await self._conn.execute(
-            "INSERT INTO kick_events (ts, mac, dry_run) VALUES (?, ?, ?)",
-            (time.time(), mac, 1 if dry_run else 0),
+            "INSERT INTO kick_events "
+            "(ts, mac, dry_run, mechanism, target_bssid, attempt_group) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (time.time(), mac, 1 if dry_run else 0, mechanism, target_bssid, attempt_group),
         )
         await self._conn.commit()
 
