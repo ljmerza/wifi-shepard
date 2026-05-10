@@ -12,6 +12,11 @@ import yaml
 
 _ENV_VAR_PATTERN = re.compile(r"\$\{([A-Z_][A-Z0-9_]*)\}")
 
+# ADR-0003 §Decision: kick_mechanism is a closed set. Anything else fails closed
+# at config parse time so a typo (`kick_mechanism: dauth`) doesn't silently
+# resolve to "deauth" and erase the operator's intent from the audit trail.
+_VALID_KICK_MECHANISMS: frozenset[str] = frozenset({"deauth", "btm", "auto"})
+
 
 def _interpolate_env(text: str) -> str:
     def repl(match: re.Match[str]) -> str:
@@ -138,6 +143,11 @@ def build_config(
     allowlist: list[str] | tuple[str, ...] = (),
     controllers: list[dict[str, Any]] | tuple[dict[str, Any], ...] = (),
 ) -> Config:
+    if kick_mechanism not in _VALID_KICK_MECHANISMS:
+        raise ValueError(
+            f"kick_mechanism must be one of {sorted(_VALID_KICK_MECHANISMS)}; "
+            f"got {kick_mechanism!r}"
+        )
     detection = DetectionConfig(
         tx_rate_kbps_max=tx_rate_kbps_max,
         retry_pct_max=retry_pct_max,
@@ -155,6 +165,12 @@ def build_config(
     overrides_typed = tuple(
         OverrideEntry(**{k: v for k, v in o.items() if k in known}) for o in overrides
     )
+    for entry in overrides_typed:
+        if entry.kick_mechanism is not None and entry.kick_mechanism not in _VALID_KICK_MECHANISMS:
+            raise ValueError(
+                f"overrides[mac={entry.mac}].kick_mechanism must be one of "
+                f"{sorted(_VALID_KICK_MECHANISMS)}; got {entry.kick_mechanism!r}"
+            )
     controllers_typed = tuple(_build_controller_spec(c, i) for i, c in enumerate(controllers))
     return Config(
         detection=detection,
