@@ -76,3 +76,51 @@ async def test_ac_1_deauth_default_calls_force_reconnect_and_records_deauth_mech
         uuid.UUID(rows[0][2])  # raises ValueError if it's not a valid UUID
     finally:
         await db.close()
+
+
+@pytest.mark.asyncio
+async def test_ac_2_explicit_btm_calls_send_btm_request_and_records_btm_mechanism(
+    temp_db_path, fake_ha
+):
+    from wifi_shepard.config import build_config
+    from wifi_shepard.db import Database
+    from wifi_shepard.scanner import Scanner
+
+    bad_mac = "dc:cc:e6:66:86:2b"
+    fake = FakeController(clients=[_bad_client(bad_mac)])
+    config = build_config(dry_run=False, window_samples=1, kick_mechanism="btm")
+
+    db = Database(temp_db_path)
+    await db.connect()
+    try:
+        scanner = Scanner(controller=fake, db=db, config=config, ha=fake_ha)
+        await scanner.run_once()
+
+        assert fake.btm_calls == [(bad_mac, None)], (
+            f"AC-2: kick_mechanism=btm must call send_btm_request(mac, target_bssid=None) "
+            f"exactly once; got {fake.btm_calls}"
+        )
+        assert fake.force_reconnect_calls == [], (
+            f"AC-2: kick_mechanism=btm must NOT call force_reconnect_client; "
+            f"got {fake.force_reconnect_calls}"
+        )
+
+        async with aiosqlite.connect(temp_db_path) as conn:
+            cur = await conn.execute(
+                "SELECT mechanism, target_bssid, attempt_group FROM kick_events "
+                "WHERE mac = ? AND dry_run = 0",
+                (bad_mac,),
+            )
+            rows = await cur.fetchall()
+        assert len(rows) == 1, f"AC-2: expected exactly one kick row, got {len(rows)}"
+        assert rows[0][0] == "btm", (
+            f"AC-2: kick_events.mechanism must be 'btm'; got {rows[0][0]!r}"
+        )
+        assert rows[0][1] is None, (
+            f"AC-2: kick_events.target_bssid must be NULL when no target supplied; "
+            f"got {rows[0][1]!r}"
+        )
+        assert rows[0][2] is not None, "AC-2: attempt_group must be set"
+        uuid.UUID(rows[0][2])
+    finally:
+        await db.close()
