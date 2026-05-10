@@ -124,3 +124,55 @@ async def test_ac_2_explicit_btm_calls_send_btm_request_and_records_btm_mechanis
         uuid.UUID(rows[0][2])
     finally:
         await db.close()
+
+
+@pytest.mark.asyncio
+async def test_ac_3_auto_sends_btm_first_no_capability_check_budget_plus_one(
+    temp_db_path, fake_ha
+):
+    """auto-mode is speculative-BTM-then-deauth-fallback. The first cycle always sends BTM,
+    regardless of any controller-exposed capability flag (the empirical probe in ADR-0003
+    showed UniFi exposes no usable BTM-capability discriminator). The fallback to deauth
+    happens on the next cycle (AC-4). The whole pair counts as one logical kick — AC-3
+    asserts that the FIRST cycle increments backoff exactly once."""
+    from wifi_shepard.config import build_config
+    from wifi_shepard.db import Database
+    from wifi_shepard.scanner import Scanner
+
+    bad_mac = "dc:cc:e6:66:86:2b"
+    fake = FakeController(clients=[_bad_client(bad_mac)])
+    config = build_config(dry_run=False, window_samples=1, kick_mechanism="auto")
+
+    db = Database(temp_db_path)
+    await db.connect()
+    try:
+        scanner = Scanner(controller=fake, db=db, config=config, ha=fake_ha)
+        await scanner.run_once()
+
+        assert fake.btm_calls == [(bad_mac, None)], (
+            f"AC-3: auto-mode must call send_btm_request first; got {fake.btm_calls}"
+        )
+        assert fake.force_reconnect_calls == [], (
+            f"AC-3: auto-mode must NOT call force_reconnect_client on the first cycle "
+            f"(deauth fallback only fires on the next cycle, AC-4); "
+            f"got {fake.force_reconnect_calls}"
+        )
+
+        async with aiosqlite.connect(temp_db_path) as conn:
+            cur = await conn.execute(
+                "SELECT mechanism FROM kick_events WHERE mac = ? AND dry_run = 0",
+                (bad_mac,),
+            )
+            rows = await cur.fetchall()
+        assert len(rows) == 1, f"AC-3: expected exactly one kick row on first cycle, got {len(rows)}"
+        assert rows[0][0] == "btm", (
+            f"AC-3: auto-mode first attempt records mechanism='btm'; got {rows[0][0]!r}"
+        )
+
+        assert scanner.backoff is not None and scanner.backoff.kick_count(bad_mac) == 1, (
+            f"AC-3: backoff kick_count must be exactly 1 after one BTM attempt "
+            f"(not 2 — the deauth fallback in AC-4 does NOT re-increment); "
+            f"got {scanner.backoff.kick_count(bad_mac) if scanner.backoff else None}"
+        )
+    finally:
+        await db.close()
