@@ -32,6 +32,10 @@ uv.lock.bak
 *.env
 *.local.env
 
+# Local config working copy (created from config.example.yaml; never commit
+# even an env-interpolated copy with a real host hardcoded).
+config.yaml
+
 # Runtime state written by the daemon (SQLite WAL, etc.).
 volumes/
 

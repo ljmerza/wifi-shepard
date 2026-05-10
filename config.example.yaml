@@ -17,10 +17,10 @@
 controllers:
   - type: unifi
     name: home
-    host: 192.168.1.1
-    username: shepard
+    host: ${UNIFI_HOST}
+    username: ${UNIFI_USERNAME}
     password: ${UNIFI_PASSWORD}
-    site: default
+    site: ${UNIFI_SITE}
     # The code default is verify_ssl: true (full cert + hostname verification).
     # The typical UDM Pro ships a self-signed cert that won't validate against the
     # system CA bundle, so a stock UniFi setup needs this explicit opt-out. Once you
