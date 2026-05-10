@@ -51,14 +51,19 @@ class Actor:
             self.backoff.record_kick(mac)
         mechanism = resolve_kick_mechanism(mac, self.config)
         attempt_group = str(uuid.uuid4())
-        if mechanism == "btm":
+        # auto-mode is speculative BTM-then-deauth-fallback (ADR-0003 §Decision):
+        # always send BTM first, then on the next scan cycle if the client did not
+        # roam, fall back to deauth under the same attempt_group. Recorded as 'btm'
+        # in the row; AC-4's fallback writes the second 'deauth_fallback' row.
+        sent_mechanism = "btm" if mechanism in ("btm", "auto") else "deauth"
+        if sent_mechanism == "btm":
             await self.controller.send_btm_request(mac, target_bssid=None)
         else:
             await self.controller.force_reconnect_client(mac)
         await self.db.insert_kick(
             mac=mac,
             dry_run=False,
-            mechanism=mechanism,
+            mechanism=sent_mechanism,
             attempt_group=attempt_group,
         )
         if self.ha is not None:
