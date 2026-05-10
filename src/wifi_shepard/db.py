@@ -26,9 +26,21 @@ CREATE TABLE IF NOT EXISTS kick_events (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     ts REAL NOT NULL,
     mac TEXT NOT NULL,
-    dry_run INTEGER NOT NULL DEFAULT 0
+    dry_run INTEGER NOT NULL DEFAULT 0,
+    mechanism TEXT NOT NULL DEFAULT 'deauth',
+    target_bssid TEXT,
+    attempt_group TEXT
 );
 """
+
+# Forward-compatible migration: a kick_events table created under ADR-0001 has
+# only (id, ts, mac, dry_run). Each ALTER TABLE adds one missing column,
+# backfilling existing rows with the default. ADR-0003 AC-8.
+_KICK_EVENTS_MIGRATIONS = (
+    ("mechanism", "ALTER TABLE kick_events ADD COLUMN mechanism TEXT NOT NULL DEFAULT 'deauth'"),
+    ("target_bssid", "ALTER TABLE kick_events ADD COLUMN target_bssid TEXT"),
+    ("attempt_group", "ALTER TABLE kick_events ADD COLUMN attempt_group TEXT"),
+)
 
 
 class Database:
@@ -42,7 +54,17 @@ class Database:
         await self._conn.execute("PRAGMA journal_mode=WAL")
         await self._conn.execute(SCHEMA_CLIENT_SAMPLES)
         await self._conn.execute(SCHEMA_KICK_EVENTS)
+        await self._migrate_kick_events()
         await self._conn.commit()
+
+    async def _migrate_kick_events(self) -> None:
+        if self._conn is None:
+            raise RuntimeError("Database._migrate_kick_events called before connect()")
+        cur = await self._conn.execute("PRAGMA table_info(kick_events)")
+        existing = {row[1] for row in await cur.fetchall()}
+        for column, ddl in _KICK_EVENTS_MIGRATIONS:
+            if column not in existing:
+                await self._conn.execute(ddl)
 
     async def insert_sample(self, client: Any) -> None:
         if self._conn is None:
