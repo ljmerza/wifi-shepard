@@ -58,16 +58,20 @@ class Actor:
             "wifi_tx_attempts": client.wifi_tx_attempts,
             "radio": client.radio,
         }
+        # Resolve once at the top — used by every code path below. Two call
+        # sites would have to keep the ('btm','auto')→'btm' dispatch in
+        # lockstep, which is a foot-gun the compiler can't catch.
+        resolved_mechanism = resolve_kick_mechanism(mac, self.config)
+        sent_mechanism = _dispatch_mechanism(resolved_mechanism)
+
         if self.config.scanner.dry_run:
-            resolved = resolve_kick_mechanism(mac, self.config)
-            would_send = _dispatch_mechanism(resolved)
             logger.info(
                 "would_kick",
                 extra={
                     "mac": mac,
                     "thresholds": thresholds,
                     "reason": reason,
-                    "mechanism": would_send,
+                    "mechanism": sent_mechanism,
                 },
             )
             return
@@ -81,8 +85,15 @@ class Actor:
         # If we sent BTM on a previous cycle and the client is still bad-state on
         # the same AP, fall back to deauth under the same attempt_group. The pair
         # counts as ONE logical kick — record_kick already fired on the BTM cycle.
+        # If client.ap_id is None (UniFi can transiently report this mid-roam),
+        # don't fall back: we can't prove the client stayed put, and an
+        # equality match against a stored None would silently double-charge.
         pending = self._pending_btm.get(mac)
-        if pending is not None and pending["ap_id"] == client.ap_id:
+        if (
+            pending is not None
+            and client.ap_id is not None
+            and pending["ap_id"] == client.ap_id
+        ):
             await self.controller.force_reconnect_client(mac)
             await self.db.insert_kick(
                 mac=mac,
@@ -99,20 +110,25 @@ class Actor:
             del self._pending_btm[mac]
             return
 
-        mechanism = resolve_kick_mechanism(mac, self.config)
         attempt_group = str(uuid.uuid4())
         # auto-mode is speculative BTM-then-deauth-fallback (ADR-0003 §Decision):
         # always send BTM first, then on the next scan cycle if the client did not
         # roam, fall back to deauth under the same attempt_group. Recorded as 'btm'
         # in the row; the fallback path above writes the second 'deauth_fallback' row.
-        sent_mechanism = _dispatch_mechanism(mechanism)
         # Self-review BLOCKER #2: the controller call is the only step that can
         # raise on a real network. If it raises, NOTHING below this point should
         # execute — no record_kick (would burn budget), no DB row (would record a
         # kick that didn't happen), no notify (would lie to the operator).
         if sent_mechanism == "btm":
             await self.controller.send_btm_request(mac, target_bssid=None)
-            self._pending_btm[mac] = {"group": attempt_group, "ap_id": client.ap_id}
+            # Skip pending bookkeeping if ap_id is unknown — a None-vs-real
+            # comparison next cycle would be ambiguous and the post-kick
+            # outcome log can't make a useful from_ap/to_ap claim either.
+            if client.ap_id is not None:
+                self._pending_btm[mac] = {
+                    "group": attempt_group,
+                    "ap_id": client.ap_id,
+                }
         else:
             await self.controller.force_reconnect_client(mac)
         if self.backoff is not None:
@@ -123,12 +139,13 @@ class Actor:
             mechanism=sent_mechanism,
             attempt_group=attempt_group,
         )
-        self._record_pending_outcome(
-            mac=mac,
-            ap_id=client.ap_id,
-            mechanism=sent_mechanism,
-            attempt_group=attempt_group,
-        )
+        if client.ap_id is not None:
+            self._record_pending_outcome(
+                mac=mac,
+                ap_id=client.ap_id,
+                mechanism=sent_mechanism,
+                attempt_group=attempt_group,
+            )
         if self.ha is not None:
             await self.ha.notify(mac, severity="kick")
 
