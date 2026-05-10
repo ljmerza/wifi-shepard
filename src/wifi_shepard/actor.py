@@ -4,6 +4,8 @@ import logging
 import uuid
 from typing import Any
 
+from .scorer import resolve_kick_mechanism
+
 logger = logging.getLogger("wifi_shepard.actor")
 
 
@@ -47,12 +49,16 @@ class Actor:
 
         if self.backoff is not None:
             self.backoff.record_kick(mac)
+        mechanism = resolve_kick_mechanism(mac, self.config)
         attempt_group = str(uuid.uuid4())
-        await self.controller.force_reconnect_client(mac)
+        if mechanism == "btm":
+            await self.controller.send_btm_request(mac, target_bssid=None)
+        else:
+            await self.controller.force_reconnect_client(mac)
         await self.db.insert_kick(
             mac=mac,
             dry_run=False,
-            mechanism="deauth",
+            mechanism=mechanism,
             attempt_group=attempt_group,
         )
         if self.ha is not None:
