@@ -19,6 +19,14 @@ def resolve_thresholds(mac: str, config: Any) -> dict[str, Any]:
     return resolved
 
 
+def resolve_kick_mechanism(mac: str, config: Any) -> str:
+    """Per-MAC override > global default. ADR-0003 AC-5 (mirrors ADR-0001 AC-6)."""
+    for override in config.overrides:
+        if override.mac == mac and getattr(override, "kick_mechanism", None) is not None:
+            return override.kick_mechanism
+    return config.scanner.kick_mechanism
+
+
 def is_bad_state(samples: list[Any], thresholds: dict[str, Any], radios: tuple[str, ...]) -> bool:
     if not samples:
         return False
