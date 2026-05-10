@@ -95,3 +95,20 @@ async def test_ac_8_migration_adds_columns_and_backfills_existing_rows(temp_db_p
         assert second[2] == "deauth"
     finally:
         await db.close()
+
+    # Idempotency: a second connect against the already-migrated DB must NOT
+    # raise (sqlite ALTER TABLE on an existing column raises "duplicate column"),
+    # and the row count must be unchanged. Pins the column-presence guard in
+    # _migrate_kick_events; without it, every daemon restart would crash here.
+    db2 = Database(temp_db_path)
+    await db2.connect()
+    try:
+        async with aiosqlite.connect(temp_db_path) as conn:
+            cur = await conn.execute("SELECT COUNT(*) FROM kick_events")
+            (count_after_second_connect,) = await cur.fetchone()
+        assert count_after_second_connect == 2, (
+            "AC-8 idempotency: a second migration-on-connect must not lose or "
+            f"duplicate rows; got {count_after_second_connect} (expected 2)"
+        )
+    finally:
+        await db2.close()

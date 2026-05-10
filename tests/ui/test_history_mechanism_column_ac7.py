@@ -89,13 +89,20 @@ def test_ac_7_history_renders_mechanism_and_groups_attempt_group_pair(make_db) -
     lower = text.lower()
 
     # Each mechanism string from the seeded data must appear in the rendered HTML.
-    assert "btm" in lower, "AC-7: 'btm' mechanism must render somewhere in the timeline"
+    # Seeder writes 2 'btm' mechanism cells (the speculative-BTM real kick AND a
+    # would-kick dry-run row). Asserting >=2 ensures BOTH surface — a regression
+    # that drops the real-kick mechanism cell while leaving the dry-run cell
+    # alone (or vice versa) would slip past `"btm" in lower`.
+    assert lower.count("btm") >= 2, (
+        f"AC-7: 'btm' mechanism must render on both real-kick and dry-run rows; "
+        f"got {lower.count('btm')} occurrences"
+    )
     assert "deauth_fallback" in lower, (
         "AC-7: 'deauth_fallback' mechanism must render to distinguish fallback rows"
     )
     # The standalone deauth row must also surface its mechanism. The token
     # 'deauth' substring matches both 'deauth' and 'deauth_fallback', so just
-    # check >=1 occurrences (the assertion above already covers fallback).
+    # check >=2 occurrences (one from standalone deauth, one from deauth_fallback).
     assert lower.count("deauth") >= 2, (
         "AC-7: both standalone deauth and deauth_fallback rows must render their mechanism"
     )
