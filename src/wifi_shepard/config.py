@@ -67,6 +67,7 @@ class ScannerConfig:
     poll_interval_seconds: int = 60
     window_samples: int = 5
     dry_run: bool = True
+    kick_mechanism: str = "deauth"
 
 
 @dataclass(frozen=True)
@@ -80,6 +81,7 @@ class OverrideEntry:
     tx_rate_kbps_max: int | None = None
     retry_pct_max: int | None = None
     signal_dbm_max: int | None = None
+    kick_mechanism: str | None = None
 
 
 @dataclass(frozen=True)
@@ -131,6 +133,7 @@ def build_config(
     window_samples: int = 5,
     poll_interval_seconds: int = 60,
     quarantine_after_kicks: int = 5,
+    kick_mechanism: str = "deauth",
     overrides: list[dict[str, Any]] | tuple[dict[str, Any], ...] = (),
     allowlist: list[str] | tuple[str, ...] = (),
     controllers: list[dict[str, Any]] | tuple[dict[str, Any], ...] = (),
@@ -145,6 +148,7 @@ def build_config(
         poll_interval_seconds=poll_interval_seconds,
         window_samples=window_samples,
         dry_run=dry_run,
+        kick_mechanism=kick_mechanism,
     )
     backoff = BackoffConfig(quarantine_after_kicks=quarantine_after_kicks)
     known = {f.name for f in dataclasses.fields(OverrideEntry)}
