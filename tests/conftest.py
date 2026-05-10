@@ -15,6 +15,7 @@ class FakeController:
     aps: list[Any] = field(default_factory=list)
     radio_stats: dict[str, list[Any]] = field(default_factory=dict)
     force_reconnect_calls: list[str] = field(default_factory=list)
+    btm_calls: list[tuple[str, str | None]] = field(default_factory=list)
     closed: bool = False
 
     async def list_wireless_clients(self) -> list[Any]:
@@ -30,7 +31,7 @@ class FakeController:
         self.force_reconnect_calls.append(mac)
 
     async def send_btm_request(self, mac: str, target_bssid: str | None = None) -> None:
-        return None
+        self.btm_calls.append((mac, target_bssid))
 
     async def close(self) -> None:
         self.closed = True
