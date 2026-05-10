@@ -5,11 +5,12 @@
 {% if events %}
 <table>
   <thead>
-    <tr><th>When (UTC)</th><th>Kind</th><th>Detail</th></tr>
+    <tr><th>When (UTC)</th><th>Kind</th><th>Mechanism</th><th>Attempt group</th><th>Detail</th></tr>
   </thead>
   <tbody>
     {% for ev in events %}
-    <tr class="{{ 'dry' if ev.kind == 'kick_dry_run' else '' }}">
+    <tr class="{{ 'dry' if ev.kind == 'kick_dry_run' else '' }}"
+        {%- if ev.attempt_group %} data-attempt-group="{{ ev.attempt_group }}"{% endif %}>
       <td title="{{ ev.ts | int }}">{{ ev.ts | fmt_ts }}</td>
       <td>
         {%- if ev.kind == 'kick_dry_run' -%}dry-run kick
@@ -17,6 +18,8 @@
         {%- else -%}sample
         {%- endif -%}
       </td>
+      <td class="mechanism">{% if ev.mechanism %}{{ ev.mechanism }}{% endif %}</td>
+      <td class="attempt-group">{% if ev.attempt_group %}{{ ev.attempt_group }}{% endif %}</td>
       <td>{{ ev.detail }}</td>
     </tr>
     {% endfor %}

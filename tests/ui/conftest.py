@@ -24,7 +24,10 @@ CREATE TABLE kick_events (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     ts REAL NOT NULL,
     mac TEXT NOT NULL,
-    dry_run INTEGER NOT NULL DEFAULT 0
+    dry_run INTEGER NOT NULL DEFAULT 0,
+    mechanism TEXT NOT NULL DEFAULT 'deauth',
+    target_bssid TEXT,
+    attempt_group TEXT
 );
 """
 

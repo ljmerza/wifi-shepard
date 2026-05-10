@@ -33,6 +33,8 @@ class HistoryEvent:
     ts: float
     kind: str  # "kick", "kick_dry_run", or "sample"
     detail: str  # human-readable line of context
+    mechanism: str | None = None  # 'deauth' / 'btm' / 'deauth_fallback' for kick rows
+    attempt_group: str | None = None  # UUID linking BTM+deauth_fallback pairs (ADR-0003 AC-7)
 
 
 @dataclass(frozen=True)
@@ -146,14 +148,31 @@ def device_history(
     a URL shouldn't get a silently-empty timeline.
     """
     events: list[HistoryEvent] = []
-    for ts, dry_run in conn.execute(
-        "SELECT ts, dry_run FROM kick_events WHERE mac = ? COLLATE NOCASE ORDER BY ts DESC LIMIT ?",
+    for ts, dry_run, mechanism, attempt_group in conn.execute(
+        "SELECT ts, dry_run, mechanism, attempt_group FROM kick_events "
+        "WHERE mac = ? COLLATE NOCASE ORDER BY ts DESC LIMIT ?",
         (mac, limit),
     ):
         if dry_run:
-            events.append(HistoryEvent(ts=ts, kind="kick_dry_run", detail="would-kick (dry-run)"))
+            events.append(
+                HistoryEvent(
+                    ts=ts,
+                    kind="kick_dry_run",
+                    detail="would-kick (dry-run)",
+                    mechanism=mechanism,
+                    attempt_group=attempt_group,
+                )
+            )
         else:
-            events.append(HistoryEvent(ts=ts, kind="kick", detail="kick"))
+            events.append(
+                HistoryEvent(
+                    ts=ts,
+                    kind="kick",
+                    detail="kick",
+                    mechanism=mechanism,
+                    attempt_group=attempt_group,
+                )
+            )
 
     for ts, signal, tx_rate, retries, attempts, radio, ap, cu in conn.execute(
         "SELECT ts, signal, tx_rate_kbps, tx_retries, wifi_tx_attempts, "
