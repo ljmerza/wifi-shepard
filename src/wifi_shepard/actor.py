@@ -99,8 +99,6 @@ class Actor:
             del self._pending_btm[mac]
             return
 
-        if self.backoff is not None:
-            self.backoff.record_kick(mac)
         mechanism = resolve_kick_mechanism(mac, self.config)
         attempt_group = str(uuid.uuid4())
         # auto-mode is speculative BTM-then-deauth-fallback (ADR-0003 §Decision):
@@ -108,11 +106,17 @@ class Actor:
         # roam, fall back to deauth under the same attempt_group. Recorded as 'btm'
         # in the row; the fallback path above writes the second 'deauth_fallback' row.
         sent_mechanism = _dispatch_mechanism(mechanism)
+        # Self-review BLOCKER #2: the controller call is the only step that can
+        # raise on a real network. If it raises, NOTHING below this point should
+        # execute — no record_kick (would burn budget), no DB row (would record a
+        # kick that didn't happen), no notify (would lie to the operator).
         if sent_mechanism == "btm":
             await self.controller.send_btm_request(mac, target_bssid=None)
             self._pending_btm[mac] = {"group": attempt_group, "ap_id": client.ap_id}
         else:
             await self.controller.force_reconnect_client(mac)
+        if self.backoff is not None:
+            self.backoff.record_kick(mac)
         await self.db.insert_kick(
             mac=mac,
             dry_run=False,

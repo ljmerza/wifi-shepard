@@ -349,14 +349,57 @@ def test_verify_ssl_defaults_to_true_when_kwarg_omitted():
 
 
 @pytest.mark.asyncio
-async def test_send_btm_request_raises_not_implemented_in_mvp():
+async def test_send_btm_request_posts_to_cmd_devmgr_with_bss_transition_payload():
+    """ADR-0003 Phase 2: send_btm_request issues a raw POST against the UniFi
+    cmd/devmgr endpoint with cmd=bss-transition. Phase 8 integration may
+    invalidate the exact payload shape against a real controller — this test
+    pins the contract so a future change can't silently revert."""
     from wifi_shepard.controllers import UniFiController
 
     controller = UniFiController(
-        host=HOST, username="shepard", password="secret", verify_ssl=False, port=PORT
+        host=HOST,
+        username="shepard",
+        password="secret",
+        site="default",
+        verify_ssl=False,
+        port=PORT,
     )
-    with pytest.raises(NotImplementedError, match="BTM"):
-        await controller.send_btm_request("aa:bb:cc:dd:ee:01")
+    target_url = f"{BASE}{SITE_PREFIX}/cmd/devmgr"
+    try:
+        with aioresponses() as m:
+            _stub_login(m)
+            m.post(
+                target_url,
+                status=200,
+                content_type="application/json",
+                body=json.dumps({"meta": {"rc": "ok"}, "data": []}),
+            )
+            await controller.login()
+            await controller.send_btm_request("AA:BB:CC:DD:EE:01")
+
+        # aioresponses stores requests keyed by (method, URL); look up the POST.
+        post_url = next(
+            (k for k in m.requests if k[0].lower() == "post" and "cmd/devmgr" in str(k[1])),
+            None,
+        )
+        assert post_url is not None, (
+            "expected a POST to a /cmd/devmgr URL; got "
+            f"{[(k[0], str(k[1])) for k in m.requests]}"
+        )
+        calls = m.requests[post_url]
+        assert len(calls) == 1, f"expected one BTM POST, got {len(calls)}"
+        payload = calls[0].kwargs.get("json") or calls[0].kwargs.get("data") or {}
+        assert payload.get("cmd") == "bss-transition", (
+            f"BTM payload must carry cmd=bss-transition; got {payload!r}"
+        )
+        assert payload.get("mac") == "aa:bb:cc:dd:ee:01", (
+            f"BTM payload must lowercase the MAC (matches deauth path); got {payload!r}"
+        )
+        assert "target_bssid" not in payload, (
+            "no target_bssid was passed; the field must not be present in the payload"
+        )
+    finally:
+        await controller.close()
 
 
 @pytest.mark.asyncio
