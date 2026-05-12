@@ -141,6 +141,17 @@ def test_can_wire_call_gates_global_only_not_per_ap() -> None:
     assert reason2 == "global_rate_limit"
 
 
+def test_record_kick_skips_per_ap_state_when_cap_disabled() -> None:
+    """When max_kicks_per_ap_per_window=0, record_kick must not accumulate
+    per-AP entries — pruning is also gated on the cap, so always-appending
+    would leak one deque entry per kick over the daemon's lifetime."""
+    rl = _make(min_seconds_between_kicks=5, max_kicks_per_ap_per_window=0)
+    for t in range(0, 10_000, 6):
+        rl.record_kick("ap1", now=float(t))
+    # No per-AP state should exist at all; the deque is never created.
+    assert "ap1" not in rl._per_ap_kicks
+
+
 def test_per_ap_deque_prunes_old_entries() -> None:
     # Verify the per-AP deque doesn't grow unboundedly.
     rl = _make(max_kicks_per_ap_per_window=10, per_ap_window_seconds=100)

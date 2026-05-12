@@ -103,14 +103,16 @@ class Actor:
             # single-flight only, not the per-AP cap (it's the same logical kick).
             if self.rate_limiter is not None:
                 now = self.now_fn()
-                allowed, reason, retry = self.rate_limiter.can_wire_call(now=now)
+                # Distinct name from the outer `reason` dict (line 63) so the
+                # rate-limiter's string reason code can't collide with it.
+                allowed, defer_reason, retry = self.rate_limiter.can_wire_call(now=now)
                 if not allowed:
                     logger.info(
                         "kick_deferred",
                         extra={
                             "mac": mac,
                             "ap_id": client.ap_id,
-                            "reason": reason,
+                            "reason": defer_reason,
                             "retry_after_seconds": retry,
                             "stage": "deauth_fallback",
                             "attempt_group": pending["group"],
@@ -139,14 +141,16 @@ class Actor:
         # Fresh kick gate: global single-flight + per-AP cap (ADR-0004).
         if self.rate_limiter is not None:
             now = self.now_fn()
-            allowed, reason, retry = self.rate_limiter.can_kick(client.ap_id, now=now)
+            # Distinct name from the outer `reason` dict (line 63) so the
+            # rate-limiter's string reason code can't collide with it.
+            allowed, defer_reason, retry = self.rate_limiter.can_kick(client.ap_id, now=now)
             if not allowed:
                 logger.info(
                     "kick_deferred",
                     extra={
                         "mac": mac,
                         "ap_id": client.ap_id,
-                        "reason": reason,
+                        "reason": defer_reason,
                         "retry_after_seconds": retry,
                         "stage": "fresh",
                     },

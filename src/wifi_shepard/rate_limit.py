@@ -69,9 +69,11 @@ class KickRateLimiter:
     def record_kick(self, ap_id: str, *, now: float) -> None:
         """Fresh kick: both the global single-flight timer and the per-AP window count it."""
         self._last_kick_at = now
-        # Always insert; the cap check happens at can_kick time, not at record time.
-        # This keeps record_kick a pure side-effect and avoids "we recorded but rejected" ambiguity.
-        self._per_ap_kicks.setdefault(ap_id, deque()).append(now)
+        # Only track per-AP state when the cap is active. Pruning is gated on the
+        # same condition inside can_kick, so an always-on append with the cap off
+        # would grow the deque unboundedly over the daemon's lifetime.
+        if self.max_kicks_per_ap_per_window > 0:
+            self._per_ap_kicks.setdefault(ap_id, deque()).append(now)
 
     def record_wire_call(self, *, now: float) -> None:
         """Wire call under an existing attempt_group (deauth_fallback). Global only."""
