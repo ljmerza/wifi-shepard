@@ -81,6 +81,14 @@ class BackoffConfig:
 
 
 @dataclass(frozen=True)
+class SafetyRailsConfig:
+    # ADR-0004: both limits opt-in. 0 = off.
+    min_seconds_between_kicks: int = 0
+    max_kicks_per_ap_per_window: int = 0
+    per_ap_window_seconds: int = 600
+
+
+@dataclass(frozen=True)
 class OverrideEntry:
     mac: str
     tx_rate_kbps_max: int | None = None
@@ -105,6 +113,7 @@ class Config:
     detection: DetectionConfig = field(default_factory=DetectionConfig)
     scanner: ScannerConfig = field(default_factory=ScannerConfig)
     backoff: BackoffConfig = field(default_factory=BackoffConfig)
+    safety_rails: SafetyRailsConfig = field(default_factory=SafetyRailsConfig)
     overrides: tuple[OverrideEntry, ...] = ()
     allowlist: tuple[str, ...] = ()
     controllers: tuple[ControllerSpec, ...] = ()
@@ -128,6 +137,40 @@ def _build_controller_spec(item: Mapping[str, Any], index: int) -> ControllerSpe
     )
 
 
+def _build_safety_rails(raw: Mapping[str, Any] | None) -> SafetyRailsConfig:
+    """Parse + validate the safety_rails: block. Fail-closed on ADR-0004 AC-7 inputs.
+
+    Accepts None (no block in YAML) → defaults, both limits off.
+    """
+    if raw is None:
+        return SafetyRailsConfig()
+    fields: dict[str, int] = {}
+    for key, default in (
+        ("min_seconds_between_kicks", 0),
+        ("max_kicks_per_ap_per_window", 0),
+        ("per_ap_window_seconds", 600),
+    ):
+        value = raw.get(key, default)
+        # Reject non-int (incl. bool, since bool is int-subclass — but only floats/strs
+        # via YAML would normally appear, so we coerce int(value) and raise on TypeError
+        # rather than tolerate floor()ing 0.5 silently).
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise ValueError(
+                f"safety_rails.{key} must be a non-negative integer; got {value!r} "
+                f"({type(value).__name__})"
+            )
+        if value < 0:
+            raise ValueError(f"safety_rails.{key} must be >= 0; got {value!r}")
+        fields[key] = value
+    if fields["max_kicks_per_ap_per_window"] > 0 and fields["per_ap_window_seconds"] == 0:
+        raise ValueError(
+            "safety_rails.per_ap_window_seconds must be > 0 when "
+            "max_kicks_per_ap_per_window is set (otherwise every kick is "
+            "immediately out-of-window and the cap never trips)"
+        )
+    return SafetyRailsConfig(**fields)
+
+
 def build_config(
     *,
     tx_rate_kbps_max: int = 12000,
@@ -139,6 +182,7 @@ def build_config(
     poll_interval_seconds: int = 60,
     quarantine_after_kicks: int = 5,
     kick_mechanism: str = "deauth",
+    safety_rails: Mapping[str, Any] | None = None,
     overrides: list[dict[str, Any]] | tuple[dict[str, Any], ...] = (),
     allowlist: list[str] | tuple[str, ...] = (),
     controllers: list[dict[str, Any]] | tuple[dict[str, Any], ...] = (),
@@ -172,10 +216,12 @@ def build_config(
                 f"{sorted(_VALID_KICK_MECHANISMS)}; got {entry.kick_mechanism!r}"
             )
     controllers_typed = tuple(_build_controller_spec(c, i) for i, c in enumerate(controllers))
+    safety_rails_cfg = _build_safety_rails(safety_rails)
     return Config(
         detection=detection,
         scanner=scanner,
         backoff=backoff,
+        safety_rails=safety_rails_cfg,
         overrides=overrides_typed,
         allowlist=tuple(allowlist),
         controllers=controllers_typed,
@@ -193,6 +239,7 @@ def load_config_from_path(path: Path | str) -> Config:
     scanner_data = data.get("scanner") or {}
     detection_data = data.get("detection") or {}
     backoff_data = data.get("backoff") or {}
+    safety_rails_data = data.get("safety_rails")  # None = no block → defaults
 
     raw_dry_run = scanner_data.get("dry_run", True)
     if raw_dry_run is None:
@@ -227,6 +274,7 @@ def load_config_from_path(path: Path | str) -> Config:
         signal_dbm_max=int(detection_data.get("signal_dbm_max", -70)),
         radios=radios,
         quarantine_after_kicks=int(backoff_data.get("quarantine_after_kicks", 5)),
+        safety_rails=safety_rails_data,
         allowlist=allowlist,
         overrides=overrides,
         controllers=controllers,
