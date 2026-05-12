@@ -125,6 +125,22 @@ def test_record_kick_updates_both_counters() -> None:
     assert reason == "per_ap_cap"
 
 
+def test_can_wire_call_gates_global_only_not_per_ap() -> None:
+    """can_wire_call (fallback path) is gated by min_seconds_between_kicks only.
+    The per-AP cap does not apply — fallback is part of the same attempt_group
+    that was already counted at the BTM stage (ADR-0004 Fork G)."""
+    rl = _make(min_seconds_between_kicks=30, max_kicks_per_ap_per_window=1)
+    rl.record_kick("ap1", now=0.0)  # ap1 deque now [0]; cap=1 means ap1 is full
+    # Global window is open at t=100. Per-AP would block can_kick, but can_wire_call ignores it.
+    allowed, reason, _ = rl.can_wire_call(now=100.0)
+    assert allowed is True
+    assert reason is None
+    # And inside the global window it does block:
+    allowed2, reason2, _ = rl.can_wire_call(now=15.0)
+    assert allowed2 is False
+    assert reason2 == "global_rate_limit"
+
+
 def test_per_ap_deque_prunes_old_entries() -> None:
     # Verify the per-AP deque doesn't grow unboundedly.
     rl = _make(max_kicks_per_ap_per_window=10, per_ap_window_seconds=100)

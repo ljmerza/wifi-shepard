@@ -53,6 +53,24 @@ backoff:
   max_kicks_per_day: 10
   quarantine_after_kicks: 5
 
+# ADR-0004: cross-MAC safety rails. Both knobs are opt-in (0 = off).
+# Recommended workflow: enable with scanner.dry_run: true for >= 1 week,
+# read kick_deferred log frequency, then size to taste before flipping
+# dry_run to false.
+safety_rails:
+  # Global single-flight: minimum seconds between any two wire-level kicks
+  # across the whole network. Prevents UniFi anti-brute-force lockout when
+  # many clients flag bad-state in one cycle. Affects deauth, BTM, AND the
+  # deauth_fallback under an ADR-0003 attempt_group.
+  min_seconds_between_kicks: 5
+
+  # Per-AP cap: maximum logical kicks against any single AP within the rolling
+  # window. Counted at attempt_group granularity, so an ADR-0003
+  # BTM+deauth_fallback pair counts as one. Prevents draining an AP when
+  # several clients on it go bad-state simultaneously.
+  max_kicks_per_ap_per_window: 3
+  per_ap_window_seconds: 600
+
 quiet_hours:
   start: "23:00"
   end: "07:00"

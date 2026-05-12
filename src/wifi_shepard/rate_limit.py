@@ -32,17 +32,23 @@ class KickRateLimiter:
         self._last_kick_at: float | None = None
         self._per_ap_kicks: dict[str, deque[float]] = {}
 
-    def can_kick(self, ap_id: str, *, now: float) -> tuple[bool, str | None, float | None]:
-        """Returns (allowed, reason, retry_after_seconds).
-
-        Global single-flight is checked before per-AP cap so the operator's
-        first-line lockout-prevention knob always wins when both trip — the
-        retry_after for the global limit is shorter and self-correcting.
-        """
+    def _check_global(self, now: float) -> tuple[bool, str | None, float | None]:
         if self.min_seconds_between_kicks > 0 and self._last_kick_at is not None:
             elapsed = now - self._last_kick_at
             if elapsed < self.min_seconds_between_kicks:
                 return False, "global_rate_limit", self.min_seconds_between_kicks - elapsed
+        return True, None, None
+
+    def can_kick(self, ap_id: str, *, now: float) -> tuple[bool, str | None, float | None]:
+        """Fresh-kick gate: global single-flight + per-AP cap.
+
+        Global is checked first so the operator's first-line lockout-prevention
+        knob always wins when both trip — global retry_after is shorter and
+        self-correcting.
+        """
+        allowed, reason, retry = self._check_global(now)
+        if not allowed:
+            return False, reason, retry
         if self.max_kicks_per_ap_per_window > 0:
             deq = self._prune(ap_id, now)
             if len(deq) >= self.max_kicks_per_ap_per_window:
@@ -50,6 +56,15 @@ class KickRateLimiter:
                 retry = self.per_ap_window_seconds - (now - deq[0])
                 return False, "per_ap_cap", retry
         return True, None, None
+
+    def can_wire_call(self, *, now: float) -> tuple[bool, str | None, float | None]:
+        """Fallback wire-call gate: global single-flight only.
+
+        A deauth_fallback under an existing attempt_group is the same logical
+        kick that already passed the per-AP check at the BTM stage (ADR-0004
+        Fork G). Only the global timer can still trip the wire call.
+        """
+        return self._check_global(now)
 
     def record_kick(self, ap_id: str, *, now: float) -> None:
         """Fresh kick: both the global single-flight timer and the per-AP window count it."""
