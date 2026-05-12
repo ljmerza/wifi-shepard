@@ -67,6 +67,17 @@ def test_non_integer_min_seconds_rejected() -> None:
         build_config(safety_rails=dict(min_seconds_between_kicks="many"))  # type: ignore[arg-type]
 
 
+def test_bool_rejected_even_though_python_bool_is_int_subclass() -> None:
+    """YAML parses `yes`/`no`/`true`/`false` as Python bool, which is int-subclass.
+    A typo like `min_seconds_between_kicks: yes` would silently coerce to 1 if we
+    only checked isinstance(v, int). Reject explicitly so the operator sees a
+    clear error instead of a silently-zero / silently-one limit."""
+    with pytest.raises(ValueError, match="min_seconds_between_kicks"):
+        build_config(safety_rails=dict(min_seconds_between_kicks=True))  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="max_kicks_per_ap_per_window"):
+        build_config(safety_rails=dict(max_kicks_per_ap_per_window=False))  # type: ignore[arg-type]
+
+
 def test_yaml_safety_rails_block_parses(tmp_path: Path) -> None:
     cfg_path = tmp_path / "config.yaml"
     cfg_path.write_text(
