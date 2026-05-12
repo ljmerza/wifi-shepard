@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import logging
+import time
 import uuid
+from collections.abc import Callable
 from typing import Any
 
+from .rate_limit import KickRateLimiter
 from .scorer import resolve_kick_mechanism
 
 logger = logging.getLogger("wifi_shepard.actor")
@@ -34,12 +37,18 @@ class Actor:
         db: Any,
         ha: Any | None = None,
         backoff: Any | None = None,
+        rate_limiter: KickRateLimiter | None = None,
+        now_fn: Callable[[], float] = time.monotonic,
     ) -> None:
         self.config = config
         self.controller = controller
         self.db = db
         self.ha = ha
         self.backoff = backoff
+        self.rate_limiter = rate_limiter
+        # Injected for tests (ADR-0004 Fork J): simulate clock advancement
+        # without monkey-patching the `time` module. Production uses the default.
+        self.now_fn = now_fn
         # Tracks in-flight BTM attempts so the next scan cycle can fall back to
         # deauth under the same attempt_group when the client did not roam
         # (ADR-0003 AC-4). Keyed by MAC; values: {"group": str, "ap_id": str}.
@@ -90,7 +99,28 @@ class Actor:
         # missing, so a None here can't reach this code in production.
         pending = self._pending_btm.get(mac)
         if pending is not None and pending["ap_id"] == client.ap_id:
+            # ADR-0004 Fork G: the fallback wire call is gated by the global
+            # single-flight only, not the per-AP cap (it's the same logical kick).
+            if self.rate_limiter is not None:
+                now = self.now_fn()
+                allowed, reason, retry = self.rate_limiter.can_wire_call(now=now)
+                if not allowed:
+                    logger.info(
+                        "kick_deferred",
+                        extra={
+                            "mac": mac,
+                            "ap_id": client.ap_id,
+                            "reason": reason,
+                            "retry_after_seconds": retry,
+                            "stage": "deauth_fallback",
+                            "attempt_group": pending["group"],
+                        },
+                    )
+                    # Leave _pending_btm in place so the next scan cycle retries.
+                    return
             await self.controller.force_reconnect_client(mac)
+            if self.rate_limiter is not None:
+                self.rate_limiter.record_wire_call(now=self.now_fn())
             await self.db.insert_kick(
                 mac=mac,
                 dry_run=False,
@@ -106,6 +136,23 @@ class Actor:
             del self._pending_btm[mac]
             return
 
+        # Fresh kick gate: global single-flight + per-AP cap (ADR-0004).
+        if self.rate_limiter is not None:
+            now = self.now_fn()
+            allowed, reason, retry = self.rate_limiter.can_kick(client.ap_id, now=now)
+            if not allowed:
+                logger.info(
+                    "kick_deferred",
+                    extra={
+                        "mac": mac,
+                        "ap_id": client.ap_id,
+                        "reason": reason,
+                        "retry_after_seconds": retry,
+                        "stage": "fresh",
+                    },
+                )
+                return
+
         attempt_group = str(uuid.uuid4())
         # auto-mode is speculative BTM-then-deauth-fallback (ADR-0003 §Decision):
         # always send BTM first, then on the next scan cycle if the client did not
@@ -120,6 +167,8 @@ class Actor:
             self._pending_btm[mac] = {"group": attempt_group, "ap_id": client.ap_id}
         else:
             await self.controller.force_reconnect_client(mac)
+        if self.rate_limiter is not None:
+            self.rate_limiter.record_kick(client.ap_id, now=self.now_fn())
         if self.backoff is not None:
             self.backoff.record_kick(mac)
         await self.db.insert_kick(

@@ -4,6 +4,7 @@ from typing import Any
 
 from .actor import Actor
 from .backoff import BackoffManager
+from .rate_limit import KickRateLimiter
 from .scorer import Scorer
 
 
@@ -27,16 +28,23 @@ class Scanner:
             self.backoff: BackoffManager | None = BackoffManager(
                 quarantine_after_kicks=config.backoff.quarantine_after_kicks,
             )
+            self.rate_limiter: KickRateLimiter | None = KickRateLimiter(
+                min_seconds_between_kicks=config.safety_rails.min_seconds_between_kicks,
+                max_kicks_per_ap_per_window=config.safety_rails.max_kicks_per_ap_per_window,
+                per_ap_window_seconds=config.safety_rails.per_ap_window_seconds,
+            )
             self.actor: Actor | None = Actor(
                 config=config,
                 controller=controller,
                 db=db,
                 ha=ha,
                 backoff=self.backoff,
+                rate_limiter=self.rate_limiter,
             )
         else:
             self.scorer = None
             self.backoff = None
+            self.rate_limiter = None
             self.actor = None
 
     def update_config(self, config: Any) -> None:
@@ -52,6 +60,17 @@ class Scanner:
             self.actor.config = config
         if self.backoff is not None:
             self.backoff.quarantine_after_kicks = config.backoff.quarantine_after_kicks
+        # ADR-0004 AC-8: update rate-limit thresholds in place WITHOUT resetting
+        # in-flight state (_last_kick_at, _per_ap_kicks). Operators are tuning,
+        # not requesting a state purge.
+        if self.rate_limiter is not None:
+            self.rate_limiter.min_seconds_between_kicks = (
+                config.safety_rails.min_seconds_between_kicks
+            )
+            self.rate_limiter.max_kicks_per_ap_per_window = (
+                config.safety_rails.max_kicks_per_ap_per_window
+            )
+            self.rate_limiter.per_ap_window_seconds = config.safety_rails.per_ap_window_seconds
 
     async def run_once(self) -> None:
         clients = await self.controller.list_wireless_clients()
