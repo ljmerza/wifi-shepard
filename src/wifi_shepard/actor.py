@@ -154,7 +154,8 @@ class Actor:
             return
         from_ap = pending["ap_id"]
         to_ap = client.ap_id
-        message = "kick_succeeded" if from_ap != to_ap else "kick_no_roam"
+        roamed = from_ap != to_ap
+        message = "kick_succeeded" if roamed else "kick_no_roam"
         logger.info(
             message,
             extra={
@@ -165,3 +166,11 @@ class Actor:
                 "attempt_group": pending["attempt_group"],
             },
         )
+        # If a BTM kick succeeded (client roamed off the original AP), clear the
+        # stale _pending_btm entry. Otherwise it lingers indefinitely and a future
+        # bad-state at the original ap_id would fire deauth_fallback under an
+        # unrelated attempt_group, corrupting the audit trail and bypassing the
+        # backoff budget. The no-roam case is left alone — handle() consumes it
+        # on this same cycle via the deauth_fallback path.
+        if roamed and pending["mechanism"] == "btm":
+            self._pending_btm.pop(client.mac, None)
