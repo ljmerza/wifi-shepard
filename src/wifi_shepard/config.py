@@ -247,6 +247,8 @@ def _build_reboot(raw: Mapping[str, Any] | None) -> RebootConfig:
                 f"(ha_entity); got {ha_entity!r}"
             )
         name = item.get("name")
+        if name is not None and not isinstance(name, str):
+            raise ValueError(f"reboot.overrides[{i}].name must be a string when set; got {name!r}")
         overrides.append(RebootOverride(mac=str(mac), name=name, ha_entity=ha_entity))
 
     return RebootConfig(

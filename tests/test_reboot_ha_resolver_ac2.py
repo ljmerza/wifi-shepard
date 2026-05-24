@@ -40,3 +40,7 @@ async def test_ac_2_no_suitable_entity_is_unresolved(caplog) -> None:
         target = await resolve_reboot_target(mac, cfg, registry)
 
     assert target is None, "a device with no rebootable entity is unresolved, not guessed"
+    assert any(
+        r.getMessage() == "reboot_target_unresolved" and getattr(r, "mac", None) == mac
+        for r in caplog.records
+    ), "the no-suitable-entity path must also log reboot_target_unresolved"

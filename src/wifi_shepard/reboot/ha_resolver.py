@@ -78,6 +78,11 @@ async def resolve_reboot_target(
         if normalize_mac(override.mac) == target and override.ha_entity:
             return RebootTarget(mac=mac, entity_id=override.ha_entity, source="override")
 
+    # Transport failures (HA unreachable, WS drop) are the concrete registry
+    # client's job to translate into "no match" so resolution degrades to the
+    # unresolved path (ADR-0005 Risks: HA unreachable → no action). This abstract
+    # resolver deliberately does NOT blanket-catch here — swallowing every
+    # exception would hide real bugs; the deferred WS client (ADR-0006) owns it.
     entities = await registry.entities_for_mac(mac)
     if entities:
         picked = _pick_ha_entity(entities)
