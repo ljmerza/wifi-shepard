@@ -17,6 +17,17 @@ _ENV_VAR_PATTERN = re.compile(r"\$\{([A-Z_][A-Z0-9_]*)\}")
 # resolve to "deauth" and erase the operator's intent from the audit trail.
 _VALID_KICK_MECHANISMS: frozenset[str] = frozenset({"deauth", "btm", "auto"})
 
+# ADR-0005 §Decision: reboot identification is delegated to Home Assistant. The
+# resolver name is a closed set so a typo fails closed instead of silently
+# disabling reboot resolution.
+_VALID_REBOOT_RESOLVERS: frozenset[str] = frozenset({"home_assistant"})
+
+_MAC_PATTERN = re.compile(r"^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$")
+
+
+def _is_valid_mac(value: Any) -> bool:
+    return isinstance(value, str) and _MAC_PATTERN.match(value) is not None
+
 
 def _interpolate_env(text: str) -> str:
     def repl(match: re.Match[str]) -> str:
@@ -98,6 +109,25 @@ class OverrideEntry:
 
 
 @dataclass(frozen=True)
+class RebootOverride:
+    # ADR-0005: explicit per-MAC reboot target for devices HA can't auto-resolve.
+    # `name` is the human label (the slot config.example's overrides already drop).
+    mac: str
+    name: str | None = None
+    ha_entity: str | None = None
+
+
+@dataclass(frozen=True)
+class RebootConfig:
+    # ADR-0005: opt-in, default-off. `eligible` lists MACs the operator allows
+    # rebooting; HA resolves *how*. `overrides` are the explicit fallback targets.
+    enabled: bool = False
+    resolver: str = "home_assistant"
+    eligible: tuple[str, ...] = ()
+    overrides: tuple[RebootOverride, ...] = ()
+
+
+@dataclass(frozen=True)
 class ControllerSpec:
     type: str
     name: str
@@ -114,6 +144,7 @@ class Config:
     scanner: ScannerConfig = field(default_factory=ScannerConfig)
     backoff: BackoffConfig = field(default_factory=BackoffConfig)
     safety_rails: SafetyRailsConfig = field(default_factory=SafetyRailsConfig)
+    reboot: RebootConfig = field(default_factory=RebootConfig)
     overrides: tuple[OverrideEntry, ...] = ()
     allowlist: tuple[str, ...] = ()
     controllers: tuple[ControllerSpec, ...] = ()
@@ -171,6 +202,58 @@ def _build_safety_rails(raw: Mapping[str, Any] | None) -> SafetyRailsConfig:
     return SafetyRailsConfig(**fields)
 
 
+def _build_reboot(raw: Mapping[str, Any] | None) -> RebootConfig:
+    """Parse + validate the reboot: block. Fail-closed on ADR-0005 AC-7 inputs.
+
+    Accepts None (no block in YAML) → defaults, reboot disabled.
+    """
+    if raw is None:
+        return RebootConfig()
+    if not isinstance(raw, Mapping):
+        raise ValueError(f"reboot must be a YAML mapping, got {type(raw).__name__}: {raw!r}")
+
+    enabled = raw.get("enabled", False)
+    if not isinstance(enabled, bool):
+        raise ValueError(f"reboot.enabled must be a boolean; got {enabled!r}")
+
+    resolver = raw.get("resolver", "home_assistant")
+    if resolver not in _VALID_REBOOT_RESOLVERS:
+        raise ValueError(
+            f"reboot.resolver must be one of {sorted(_VALID_REBOOT_RESOLVERS)}; got {resolver!r}"
+        )
+
+    eligible_items = _require_sequence(raw.get("eligible"), "reboot.eligible")
+    eligible: list[str] = []
+    for i, mac in enumerate(eligible_items):
+        if not _is_valid_mac(mac):
+            raise ValueError(f"reboot.eligible[{i}] must be a MAC address string; got {mac!r}")
+        eligible.append(mac)
+
+    override_items = _require_mapping_items(
+        _require_sequence(raw.get("overrides"), "reboot.overrides"), "reboot.overrides"
+    )
+    overrides: list[RebootOverride] = []
+    for i, item in enumerate(override_items):
+        mac = item.get("mac")
+        if not _is_valid_mac(mac):
+            raise ValueError(f"reboot.overrides[{i}].mac must be a MAC address string; got {mac!r}")
+        ha_entity = item.get("ha_entity")
+        if not ha_entity or not isinstance(ha_entity, str):
+            raise ValueError(
+                f"reboot.overrides[{i}] (mac={mac}) must declare a reboot target "
+                f"(ha_entity); got {ha_entity!r}"
+            )
+        name = item.get("name")
+        overrides.append(RebootOverride(mac=str(mac), name=name, ha_entity=ha_entity))
+
+    return RebootConfig(
+        enabled=enabled,
+        resolver=str(resolver),
+        eligible=tuple(eligible),
+        overrides=tuple(overrides),
+    )
+
+
 def build_config(
     *,
     tx_rate_kbps_max: int = 12000,
@@ -183,6 +266,7 @@ def build_config(
     quarantine_after_kicks: int = 5,
     kick_mechanism: str = "deauth",
     safety_rails: Mapping[str, Any] | None = None,
+    reboot: Mapping[str, Any] | None = None,
     overrides: list[dict[str, Any]] | tuple[dict[str, Any], ...] = (),
     allowlist: list[str] | tuple[str, ...] = (),
     controllers: list[dict[str, Any]] | tuple[dict[str, Any], ...] = (),
@@ -217,11 +301,13 @@ def build_config(
             )
     controllers_typed = tuple(_build_controller_spec(c, i) for i, c in enumerate(controllers))
     safety_rails_cfg = _build_safety_rails(safety_rails)
+    reboot_cfg = _build_reboot(reboot)
     return Config(
         detection=detection,
         scanner=scanner,
         backoff=backoff,
         safety_rails=safety_rails_cfg,
+        reboot=reboot_cfg,
         overrides=overrides_typed,
         allowlist=tuple(allowlist),
         controllers=controllers_typed,
@@ -240,6 +326,7 @@ def load_config_from_path(path: Path | str) -> Config:
     detection_data = data.get("detection") or {}
     backoff_data = data.get("backoff") or {}
     safety_rails_data = data.get("safety_rails")  # None = no block → defaults
+    reboot_data = data.get("reboot")  # None = no block → reboot disabled
 
     raw_dry_run = scanner_data.get("dry_run", True)
     if raw_dry_run is None:
@@ -275,6 +362,7 @@ def load_config_from_path(path: Path | str) -> Config:
         radios=radios,
         quarantine_after_kicks=int(backoff_data.get("quarantine_after_kicks", 5)),
         safety_rails=safety_rails_data,
+        reboot=reboot_data,
         allowlist=allowlist,
         overrides=overrides,
         controllers=controllers,
