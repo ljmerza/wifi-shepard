@@ -70,8 +70,8 @@ async def test_pending_btm_cleared_after_successful_roam(temp_db_path, fake_ha):
         fake.clients = [_healthy_client(bad_mac, ap_id="ap2")]
         await scanner.run_once()
         assert scanner.actor is not None
-        assert bad_mac not in scanner.actor._pending_btm, (
-            "after kick_succeeded, _pending_btm must be cleared so a future "
+        assert not scanner.actor.pending.has_btm(bad_mac), (
+            "after kick_succeeded, the pending BTM must be cleared so a future "
             "bad-state at the original ap_id does not fire stale deauth_fallback"
         )
 
