@@ -37,11 +37,16 @@ async def test_ac_1_falls_back_to_power_switch_when_no_restart_button() -> None:
     mac = "08:f9:e0:ba:c4:84"
     cfg = build_config(reboot=dict(enabled=True, eligible=[mac]))
     registry = FakeHARegistry(
-        entities_by_mac={mac: [HAEntity(entity_id="switch.fridge_plug", domain="switch")]}
+        entities_by_mac={
+            mac: [
+                HAEntity(entity_id="switch.fridge_nightlight", domain="switch"),  # feature toggle
+                HAEntity(entity_id="switch.fridge_plug", domain="switch", device_class="outlet"),
+            ]
+        }
     )
 
     target = await resolve_reboot_target(mac, cfg, registry)
 
     assert target is not None
-    assert target.entity_id == "switch.fridge_plug", "absent a restart button, use a power switch"
+    assert target.entity_id == "switch.fridge_plug", "absent a button, use the outlet switch"
     assert target.source == "ha_switch"
