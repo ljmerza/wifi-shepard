@@ -10,8 +10,11 @@ from __future__ import annotations
 
 from typing import Any
 
+from wifi_shepard.reboot import normalize_mac
+
 
 def is_reboot_eligible(mac: str, config: Any) -> bool:
     if not config.reboot.enabled:
         return False
-    return True
+    eligible = {normalize_mac(m) for m in config.reboot.eligible}
+    return normalize_mac(mac) in eligible
