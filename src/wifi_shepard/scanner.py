@@ -4,6 +4,7 @@ from typing import Any
 
 from .actor import Actor
 from .backoff import BackoffManager
+from .controllers.base import Controller
 from .rate_limit import KickRateLimiter
 from .scorer import Scorer
 
@@ -12,7 +13,7 @@ class Scanner:
     def __init__(
         self,
         *,
-        controller: Any,
+        controller: Controller,
         db: Any,
         poll_interval_seconds: float = 60.0,
         config: Any | None = None,

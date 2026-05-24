@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from .config import Config, load_config_from_path
-from .controllers import build_controller
+from .controllers import Controller, build_controller
 from .db import Database
 from .scanner import Scanner
 
@@ -20,7 +20,7 @@ class Daemon:
         *,
         config_path: Path,
         db_path: Path,
-        controllers: list[Any] | None = None,
+        controllers: list[Controller] | None = None,
         ha: Any | None = None,
     ) -> None:
         self.config_path = Path(config_path)
@@ -62,10 +62,7 @@ class Daemon:
         try:
             await self.db.connect()
             for controller in self.controllers:
-                login = getattr(controller, "login", None)
-                if login is None:
-                    continue
-                await login()
+                await controller.login()
             self._scanners = self._build_scanners()
             first = True
             while not self._shutdown.is_set():
@@ -88,11 +85,8 @@ class Daemon:
                     pass
             await self.db.close()
             for controller in self.controllers:
-                close = getattr(controller, "close", None)
-                if close is None:
-                    continue
                 try:
-                    await close()
+                    await controller.close()
                 except Exception:
                     logger.exception("controller_close_failed")
             if self.ha is not None:
@@ -130,7 +124,7 @@ def build_daemon(
     *,
     config_path: Path,
     db_path: Path,
-    controllers: list[Any] | None = None,
+    controllers: list[Controller] | None = None,
     ha: Any | None = None,
 ) -> Daemon:
     return Daemon(

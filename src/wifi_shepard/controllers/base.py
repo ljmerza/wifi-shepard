@@ -41,6 +41,15 @@ class Controller(Protocol):
     is up to each backend.
     """
 
+    async def login(self) -> None:
+        """Establish the controller session. Called once per controller at startup,
+        before any list/action method, and paired with ``close()`` on shutdown
+        (``main.Daemon.run()`` does this). Backends that need no session step may
+        implement it as a no-op, but the method must exist — the lifecycle is part
+        of the contract, not duck-typed.
+        """
+        ...
+
     async def list_wireless_clients(self) -> list[ClientSnapshot]: ...
 
     async def list_aps(self) -> list[APSnapshot]: ...

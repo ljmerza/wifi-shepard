@@ -6,6 +6,7 @@ import uuid
 from collections.abc import Callable
 from typing import Any
 
+from .controllers.base import Controller
 from .rate_limit import KickRateLimiter
 from .scorer import resolve_kick_mechanism
 
@@ -33,7 +34,7 @@ class Actor:
         self,
         *,
         config: Any,
-        controller: Any,
+        controller: Controller,
         db: Any,
         ha: Any | None = None,
         backoff: Any | None = None,

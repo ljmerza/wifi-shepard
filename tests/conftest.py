@@ -33,6 +33,12 @@ class FakeController:
     async def send_btm_request(self, mac: str, target_bssid: str | None = None) -> None:
         self.btm_calls.append((mac, target_bssid))
 
+    async def login(self) -> None:
+        # No-op: FakeController holds no session. Present because login() is part
+        # of the Controller lifecycle contract (controllers/base.py), which
+        # main.Daemon.run() now calls directly rather than via getattr.
+        return None
+
     async def close(self) -> None:
         self.closed = True
 
