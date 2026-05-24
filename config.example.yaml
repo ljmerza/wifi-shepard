@@ -71,6 +71,27 @@ safety_rails:
   max_kicks_per_ap_per_window: 3
   per_ap_window_seconds: 600
 
+# ADR-0005: device identification & reboot-backend selection. Opt-in, default-off.
+# This block decides *which* device a MAC maps to and *how* it would be rebooted
+# (delegated to Home Assistant); the reboot *action* + scheduling arrive with
+# ADR-0006, so enabling this alone has no runtime effect yet.
+#
+# Setup is intentionally minimal: list the MACs you allow rebooting under
+# `eligible:` and Home Assistant resolves how (its restart button, else a
+# smart-plug outlet switch). No per-device backend/address needed when the
+# device is in HA. `overrides:` is only for devices HA can't auto-resolve.
+# Allowlisted MACs are never reboot-eligible, regardless of OUI.
+reboot:
+  enabled: false
+  resolver: home_assistant
+  eligible:
+    - 08:f9:e0:ba:c4:84
+    - 08:f9:e0:ba:c6:48
+  overrides:
+    - mac: 08:f9:e0:ba:c6:48
+      name: "kitchen stove wled"
+      ha_entity: switch.kitchen_stove_plug
+
 quiet_hours:
   start: "23:00"
   end: "07:00"
