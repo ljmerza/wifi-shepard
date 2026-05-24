@@ -17,6 +17,8 @@ import logging
 from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
 
+from wifi_shepard.reboot import normalize_mac
+
 logger = logging.getLogger("wifi_shepard.reboot")
 
 
@@ -56,6 +58,12 @@ def _pick_ha_entity(entities: list[HAEntity]) -> tuple[str, str] | None:
 async def resolve_reboot_target(
     mac: str, config: Any, registry: HADeviceRegistry
 ) -> RebootTarget | None:
+    # Explicit override wins and short-circuits before consulting HA (AC-3).
+    target = normalize_mac(mac)
+    for override in config.reboot.overrides:
+        if normalize_mac(override.mac) == target and override.ha_entity:
+            return RebootTarget(mac=mac, entity_id=override.ha_entity, source="override")
+
     entities = await registry.entities_for_mac(mac)
     if entities:
         picked = _pick_ha_entity(entities)
