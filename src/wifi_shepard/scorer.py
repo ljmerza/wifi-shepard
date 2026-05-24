@@ -3,28 +3,7 @@ from __future__ import annotations
 from collections import deque
 from typing import Any
 
-_THRESHOLD_FIELDS = ("tx_rate_kbps_max", "retry_pct_max", "signal_dbm_max")
-
-
-def resolve_thresholds(mac: str, config: Any) -> dict[str, Any]:
-    resolved = {name: getattr(config.detection, name) for name in _THRESHOLD_FIELDS}
-    for override in config.overrides:
-        if override.mac != mac:
-            continue
-        for name in _THRESHOLD_FIELDS:
-            value = getattr(override, name, None)
-            if value is not None:
-                resolved[name] = value
-        break
-    return resolved
-
-
-def resolve_kick_mechanism(mac: str, config: Any) -> str:
-    """Per-MAC override > global default. ADR-0003 AC-5 (mirrors ADR-0001 AC-6)."""
-    for override in config.overrides:
-        if override.mac == mac and getattr(override, "kick_mechanism", None) is not None:
-            return override.kick_mechanism
-    return config.scanner.kick_mechanism
+from .resolution import resolve_thresholds
 
 
 def is_bad_state(samples: list[Any], thresholds: dict[str, Any], radios: tuple[str, ...]) -> bool:

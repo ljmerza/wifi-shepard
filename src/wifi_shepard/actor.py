@@ -8,7 +8,7 @@ from typing import Any
 
 from .controllers.base import Controller
 from .rate_limit import KickRateLimiter
-from .scorer import resolve_kick_mechanism
+from .resolution import resolve_kick_mechanism
 
 logger = logging.getLogger("wifi_shepard.actor")
 

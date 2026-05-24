@@ -10,7 +10,7 @@ from __future__ import annotations
 
 def test_ac_5_per_mac_kick_mechanism_override_beats_global():
     from wifi_shepard.config import build_config
-    from wifi_shepard.scorer import resolve_kick_mechanism
+    from wifi_shepard.resolution import resolve_kick_mechanism
 
     overridden_mac = "dc:cc:e6:66:86:2b"
     other_mac = "11:22:33:44:55:66"
@@ -32,7 +32,7 @@ def test_ac_5_per_mac_kick_mechanism_override_beats_global():
 def test_ac_5_global_default_is_deauth_when_unset():
     """Default kick_mechanism is 'deauth' (preserves ADR-0001 MVP behavior)."""
     from wifi_shepard.config import build_config
-    from wifi_shepard.scorer import resolve_kick_mechanism
+    from wifi_shepard.resolution import resolve_kick_mechanism
 
     config = build_config()
     assert resolve_kick_mechanism("aa:bb:cc:dd:ee:ff", config) == "deauth", (
@@ -63,7 +63,7 @@ def test_ac_5_yaml_round_trip_threads_kick_mechanism_through_loader(tmp_path):
     from pathlib import Path
 
     from wifi_shepard.config import load_config_from_path
-    from wifi_shepard.scorer import resolve_kick_mechanism
+    from wifi_shepard.resolution import resolve_kick_mechanism
 
     yaml_text = """
 scanner:
