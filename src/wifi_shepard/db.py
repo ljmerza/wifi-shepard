@@ -2,9 +2,33 @@ from __future__ import annotations
 
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol, runtime_checkable
 
 import aiosqlite
+
+
+@runtime_checkable
+class Store(Protocol):
+    """Persistence surface the scan pipeline depends on.
+
+    Captures exactly what Scanner/Actor need from storage (sample + kick
+    writes), so they depend on this abstraction rather than the concrete
+    ``Database``. The connect()/close() lifecycle is the composition root's
+    concern (main.Daemon) and is intentionally not part of this surface.
+    """
+
+    async def insert_sample(self, client: Any) -> None: ...
+
+    async def insert_kick(
+        self,
+        *,
+        mac: str,
+        dry_run: bool,
+        mechanism: str = "deauth",
+        target_bssid: str | None = None,
+        attempt_group: str | None = None,
+    ) -> None: ...
+
 
 SCHEMA_CLIENT_SAMPLES = """
 CREATE TABLE IF NOT EXISTS client_samples (

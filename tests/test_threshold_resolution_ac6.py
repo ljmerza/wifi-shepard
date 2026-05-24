@@ -3,7 +3,7 @@ from __future__ import annotations
 
 def test_ac_6_per_mac_override_beats_global_default():
     from wifi_shepard.config import build_config
-    from wifi_shepard.scorer import resolve_thresholds
+    from wifi_shepard.resolution import resolve_thresholds
 
     overridden_mac = "dc:cc:e6:66:86:2b"
     other_mac = "11:22:33:44:55:66"

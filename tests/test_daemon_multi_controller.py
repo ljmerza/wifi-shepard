@@ -10,8 +10,9 @@ import pytest
 class CountingController:
     """Minimal Controller implementation with login/close counters.
 
-    FakeController in conftest has no login() method, so the daemon's login
-    for-loop (main.py:64-68) is never exercised by other tests.
+    Distinct from conftest's FakeController: this one *counts* login()/close()
+    calls so the daemon's per-controller login loop can be asserted to fire
+    exactly once. FakeController's login() is a no-op and only records close().
     """
 
     def __init__(self, name: str) -> None:

@@ -4,11 +4,12 @@ import asyncio
 import logging
 import signal
 from pathlib import Path
-from typing import Any
 
 from .config import Config, load_config_from_path
-from .controllers import build_controller
+from .controllers import Controller, build_controller
 from .db import Database
+from .notify import Notifier
+from .pipeline import build_pipeline
 from .scanner import Scanner
 
 logger = logging.getLogger("wifi_shepard.main")
@@ -20,8 +21,8 @@ class Daemon:
         *,
         config_path: Path,
         db_path: Path,
-        controllers: list[Any] | None = None,
-        ha: Any | None = None,
+        controllers: list[Controller] | None = None,
+        ha: Notifier | None = None,
     ) -> None:
         self.config_path = Path(config_path)
         self.db_path = Path(db_path)
@@ -44,13 +45,15 @@ class Daemon:
         self.exit_code = 0
 
     def _build_scanners(self) -> list[Scanner]:
+        # Composition root: build each controller's pipeline here and inject it,
+        # so Scanner receives ready collaborators instead of wiring them itself.
         return [
             Scanner(
                 controller=c,
                 db=self.db,
                 poll_interval_seconds=self.config.scanner.poll_interval_seconds,
                 config=self.config,
-                ha=self.ha,
+                pipeline=build_pipeline(self.config, controller=c, db=self.db, ha=self.ha),
             )
             for c in self.controllers
         ]
@@ -62,10 +65,7 @@ class Daemon:
         try:
             await self.db.connect()
             for controller in self.controllers:
-                login = getattr(controller, "login", None)
-                if login is None:
-                    continue
-                await login()
+                await controller.login()
             self._scanners = self._build_scanners()
             first = True
             while not self._shutdown.is_set():
@@ -88,20 +88,15 @@ class Daemon:
                     pass
             await self.db.close()
             for controller in self.controllers:
-                close = getattr(controller, "close", None)
-                if close is None:
-                    continue
                 try:
-                    await close()
+                    await controller.close()
                 except Exception:
                     logger.exception("controller_close_failed")
             if self.ha is not None:
-                close = getattr(self.ha, "close", None)
-                if close is not None:
-                    try:
-                        await close()
-                    except Exception:
-                        logger.exception("ha_close_failed")
+                try:
+                    await self.ha.close()
+                except Exception:
+                    logger.exception("ha_close_failed")
 
     def _on_sighup(self) -> None:
         try:
@@ -130,8 +125,8 @@ def build_daemon(
     *,
     config_path: Path,
     db_path: Path,
-    controllers: list[Any] | None = None,
-    ha: Any | None = None,
+    controllers: list[Controller] | None = None,
+    ha: Notifier | None = None,
 ) -> Daemon:
     return Daemon(
         config_path=config_path,
