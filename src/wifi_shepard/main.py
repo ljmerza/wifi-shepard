@@ -9,6 +9,7 @@ from .config import Config, load_config_from_path
 from .controllers import Controller, build_controller
 from .db import Database
 from .notify import Notifier
+from .pipeline import build_pipeline
 from .scanner import Scanner
 
 logger = logging.getLogger("wifi_shepard.main")
@@ -44,13 +45,15 @@ class Daemon:
         self.exit_code = 0
 
     def _build_scanners(self) -> list[Scanner]:
+        # Composition root: build each controller's pipeline here and inject it,
+        # so Scanner receives ready collaborators instead of wiring them itself.
         return [
             Scanner(
                 controller=c,
                 db=self.db,
                 poll_interval_seconds=self.config.scanner.poll_interval_seconds,
                 config=self.config,
-                ha=self.ha,
+                pipeline=build_pipeline(self.config, controller=c, db=self.db, ha=self.ha),
             )
             for c in self.controllers
         ]
