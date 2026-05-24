@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import dataclasses
+import logging
 import os
 import re
 from collections.abc import Mapping, Sequence
@@ -9,6 +10,8 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+
+logger = logging.getLogger("wifi_shepard.config")
 
 _ENV_VAR_PATTERN = re.compile(r"\$\{([A-Z_][A-Z0-9_]*)\}")
 
@@ -302,6 +305,12 @@ def build_config(
     controllers_typed = tuple(_build_controller_spec(c, i) for i, c in enumerate(controllers))
     safety_rails_cfg = _build_safety_rails(safety_rails)
     reboot_cfg = _build_reboot(reboot)
+    # ADR-0005 AC-4: allowlist always wins, but a MAC in both surfaces is a
+    # contradiction the operator should see at load time.
+    allowlist_norm = {str(m).strip().lower() for m in allowlist}
+    for mac in reboot_cfg.eligible:
+        if mac.strip().lower() in allowlist_norm:
+            logger.warning("reboot_eligible_in_allowlist", extra={"mac": mac})
     return Config(
         detection=detection,
         scanner=scanner,
