@@ -4,11 +4,11 @@ import asyncio
 import logging
 import signal
 from pathlib import Path
-from typing import Any
 
 from .config import Config, load_config_from_path
 from .controllers import Controller, build_controller
 from .db import Database
+from .notify import Notifier
 from .scanner import Scanner
 
 logger = logging.getLogger("wifi_shepard.main")
@@ -21,7 +21,7 @@ class Daemon:
         config_path: Path,
         db_path: Path,
         controllers: list[Controller] | None = None,
-        ha: Any | None = None,
+        ha: Notifier | None = None,
     ) -> None:
         self.config_path = Path(config_path)
         self.db_path = Path(db_path)
@@ -90,12 +90,10 @@ class Daemon:
                 except Exception:
                     logger.exception("controller_close_failed")
             if self.ha is not None:
-                close = getattr(self.ha, "close", None)
-                if close is not None:
-                    try:
-                        await close()
-                    except Exception:
-                        logger.exception("ha_close_failed")
+                try:
+                    await self.ha.close()
+                except Exception:
+                    logger.exception("ha_close_failed")
 
     def _on_sighup(self) -> None:
         try:
@@ -125,7 +123,7 @@ def build_daemon(
     config_path: Path,
     db_path: Path,
     controllers: list[Controller] | None = None,
-    ha: Any | None = None,
+    ha: Notifier | None = None,
 ) -> Daemon:
     return Daemon(
         config_path=config_path,

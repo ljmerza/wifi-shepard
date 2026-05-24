@@ -7,6 +7,8 @@ from collections.abc import Callable
 from typing import Any
 
 from .controllers.base import Controller
+from .db import Store
+from .notify import Notifier
 from .rate_limit import KickRateLimiter
 from .resolution import resolve_kick_mechanism
 
@@ -35,8 +37,8 @@ class Actor:
         *,
         config: Any,
         controller: Controller,
-        db: Any,
-        ha: Any | None = None,
+        db: Store,
+        ha: Notifier | None = None,
         backoff: Any | None = None,
         rate_limiter: KickRateLimiter | None = None,
         now_fn: Callable[[], float] = time.monotonic,
