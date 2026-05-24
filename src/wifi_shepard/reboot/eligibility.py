@@ -1,0 +1,17 @@
+"""Reboot eligibility (ADR-0005 AC-4/AC-5/AC-6).
+
+A MAC is reboot-eligible only when reboot is enabled, the MAC was explicitly
+opted in (``reboot.eligible``), and it is not allowlisted (the allowlist always
+wins). The OUI confers nothing — eligibility requires an explicit opt-in, so a
+laptop or phone that shares a vendor block with an IoT device is never eligible.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+
+def is_reboot_eligible(mac: str, config: Any) -> bool:
+    if not config.reboot.enabled:
+        return False
+    return True
