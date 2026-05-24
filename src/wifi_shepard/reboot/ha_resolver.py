@@ -62,4 +62,6 @@ async def resolve_reboot_target(
         if picked is not None:
             entity_id, source = picked
             return RebootTarget(mac=mac, entity_id=entity_id, source=source)
+    # Fail safe: an eligible MAC we can't resolve gets no action — never a guess.
+    logger.warning("reboot_target_unresolved", extra={"mac": mac})
     return None
