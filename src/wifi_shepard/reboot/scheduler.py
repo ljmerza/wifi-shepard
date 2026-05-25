@@ -103,3 +103,13 @@ class RebootScheduler:
         logger.info("reboot_fired", extra={"mac": mac, "mode": mode, "target": target.entity_id})
         if self.ha is not None:
             await self.ha.notify(mac, severity="reboot")
+
+    def update_config(self, config: Config) -> None:
+        # ADR-0006 AC-12: SIGHUP applies the new schedule + cooldown windows on the
+        # next evaluation, keeping the SAME cooldown instance so in-memory
+        # last-reboot timestamps survive the reload (ADR-0004 AC-8 posture).
+        self.config = config
+        self.cooldown.update_params(
+            per_device_seconds=config.reboot.cooldown.per_device_seconds,
+            max_per_device_per_day=config.reboot.cooldown.max_per_device_per_day,
+        )

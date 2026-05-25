@@ -44,6 +44,12 @@ class RebootCooldown:
         if self.max_per_device_per_day > 0:
             self._per_device.setdefault(mac, deque()).append(now)
 
+    def update_params(self, *, per_device_seconds: int, max_per_device_per_day: int) -> None:
+        # ADR-0006 AC-12 (ADR-0004 AC-8 posture): SIGHUP retunes the windows in
+        # place; in-flight state (_last_reboot_at, _per_device) is NOT purged.
+        self.per_device_seconds = per_device_seconds
+        self.max_per_device_per_day = max_per_device_per_day
+
     def _prune(self, mac: str, now: float) -> deque[float]:
         """Drop reboots older than the 24h window. Returns the (mutated) deque."""
         window = self._per_device.setdefault(mac, deque())

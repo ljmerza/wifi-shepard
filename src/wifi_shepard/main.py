@@ -163,6 +163,11 @@ class Daemon:
         self.config = new_config
         for scanner in self._scanners:
             scanner.update_config(new_config)
+        # ADR-0006 AC-12: retune the proactive schedule + cooldown in place without
+        # purging in-memory last-reboot state. (A reload that flips proactive on/off
+        # mid-run does not start/stop the task here — out of Phase 1 scope.)
+        if self._scheduler is not None:
+            self._scheduler.update_config(new_config)
         self.config_reloaded.set()
 
     def _on_sigterm(self) -> None:
