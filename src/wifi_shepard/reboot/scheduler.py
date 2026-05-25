@@ -15,6 +15,7 @@ from datetime import date, datetime
 from typing import TYPE_CHECKING
 
 from wifi_shepard.reboot.cooldown import RebootCooldown
+from wifi_shepard.reboot.eligibility import is_reboot_eligible
 from wifi_shepard.reboot.ha_resolver import resolve_reboot_target
 
 if TYPE_CHECKING:
@@ -68,6 +69,10 @@ class RebootScheduler:
             await self.attempt(mac, mode="proactive")
 
     async def attempt(self, mac: str, *, mode: str = "proactive") -> None:
+        # Allowlist + opt-in are absolute (ADR-0006 AC-5): an ineligible MAC is
+        # dropped before any path — no reboot, no dry-run preview, no audit row.
+        if not is_reboot_eligible(mac, self.config):
+            return
         if self.config.reboot.dry_run:
             # Preview only: log would_reboot and write an audit row flagged
             # dry_run=1 (symmetry with the fired path, ADR-0004 AC-6), make no
