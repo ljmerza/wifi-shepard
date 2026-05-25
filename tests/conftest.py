@@ -55,6 +55,26 @@ class FakeHANotifier:
         self.closed = True
 
 
+@dataclass
+class FakeHARegistry:
+    """Stand-in for the HA device-registry transport the reboot resolver consumes
+    (ADR-0005). Maps a MAC to the entity list of the HA device whose registry
+    connections include that MAC; returns None when no device matches. Records
+    each lookup so tests can assert the resolver did (or did not) consult HA.
+
+    Intentionally type-agnostic: it stores whatever entity objects the test passes
+    in, so importing the resolver's HAEntity type here is unnecessary (keeps the
+    shared conftest collectable even before the reboot package exists).
+    """
+
+    entities_by_mac: dict[str, list[Any]] = field(default_factory=dict)
+    calls: list[str] = field(default_factory=list)
+
+    async def entities_for_mac(self, mac: str) -> list[Any] | None:
+        self.calls.append(mac)
+        return self.entities_by_mac.get(mac)
+
+
 def make_client(
     *,
     mac: str = "aa:bb:cc:dd:ee:ff",
