@@ -27,11 +27,26 @@ _VALID_KICK_MECHANISMS: frozenset[str] = frozenset({"deauth", "btm", "auto"})
 # disabling reboot resolution.
 _VALID_REBOOT_RESOLVERS: frozenset[str] = frozenset({"home_assistant"})
 
+# ADR-0006: reactive probe transport is a closed set; the proactive schedule is a
+# 24h HH:MM local time. Both fail closed so a typo can't silently disable a guard.
+_VALID_PROBE_METHODS: frozenset[str] = frozenset({"ping", "http"})
+_SCHEDULE_PATTERN = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
+
 _MAC_PATTERN = re.compile(r"^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$")
 
 
 def _is_valid_mac(value: Any) -> bool:
     return isinstance(value, str) and _MAC_PATTERN.match(value) is not None
+
+
+def _require_non_negative_int(value: Any, key: str) -> int:
+    # Reject bool explicitly: YAML parses yes/no into Python bool, an int subclass,
+    # so a bare isinstance(int) check would silently accept it (ADR-0004 AC-7).
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"{key} must be a non-negative integer; got {value!r}")
+    if value < 0:
+        raise ValueError(f"{key} must be >= 0; got {value!r}")
+    return value
 
 
 def _interpolate_env(text: str) -> str:
@@ -321,8 +336,12 @@ def _build_reboot_cooldown(raw: Mapping[str, Any] | None) -> RebootCooldownConfi
             f"reboot.cooldown must be a YAML mapping, got {type(raw).__name__}: {raw!r}"
         )
     return RebootCooldownConfig(
-        per_device_seconds=raw.get("per_device_seconds", 3600),
-        max_per_device_per_day=raw.get("max_per_device_per_day", 4),
+        per_device_seconds=_require_non_negative_int(
+            raw.get("per_device_seconds", 3600), "reboot.cooldown.per_device_seconds"
+        ),
+        max_per_device_per_day=_require_non_negative_int(
+            raw.get("max_per_device_per_day", 4), "reboot.cooldown.max_per_device_per_day"
+        ),
     )
 
 
@@ -333,9 +352,15 @@ def _build_reboot_proactive(raw: Mapping[str, Any] | None) -> RebootProactiveCon
         raise ValueError(
             f"reboot.proactive must be a YAML mapping, got {type(raw).__name__}: {raw!r}"
         )
+    schedule = raw.get("schedule", "03:30")
+    if not isinstance(schedule, str) or _SCHEDULE_PATTERN.match(schedule) is None:
+        raise ValueError(
+            f"reboot.proactive.schedule must be a 24h HH:MM time (e.g. '03:30'); "
+            f"got {schedule!r}"
+        )
     return RebootProactiveConfig(
         enabled=bool(raw.get("enabled", False)),
-        schedule=str(raw.get("schedule", "03:30")),
+        schedule=schedule,
     )
 
 
@@ -354,17 +379,31 @@ def _build_reboot_reactive(raw: Mapping[str, Any] | None) -> RebootReactiveConfi
                 f"reboot.reactive.probe must be a YAML mapping, got "
                 f"{type(probe_raw).__name__}: {probe_raw!r}"
             )
+        method = probe_raw.get("method", "ping")
+        if method not in _VALID_PROBE_METHODS:
+            raise ValueError(
+                f"reboot.reactive.probe.method must be one of "
+                f"{sorted(_VALID_PROBE_METHODS)}; got {method!r}"
+            )
         probe = RebootProbeConfig(
-            method=str(probe_raw.get("method", "ping")),
-            interval_seconds=probe_raw.get("interval_seconds", 60),
-            window_samples=probe_raw.get("window_samples", 5),
-            loss_pct_min=probe_raw.get("loss_pct_min", 30),
+            method=str(method),
+            interval_seconds=_require_non_negative_int(
+                probe_raw.get("interval_seconds", 60), "reboot.reactive.probe.interval_seconds"
+            ),
+            window_samples=_require_non_negative_int(
+                probe_raw.get("window_samples", 5), "reboot.reactive.probe.window_samples"
+            ),
+            loss_pct_min=_require_non_negative_int(
+                probe_raw.get("loss_pct_min", 30), "reboot.reactive.probe.loss_pct_min"
+            ),
         )
     return RebootReactiveConfig(
         enabled=bool(raw.get("enabled", False)),
         probe=probe,
         require_signal_adequate=bool(raw.get("require_signal_adequate", True)),
-        after_failed_kicks=raw.get("after_failed_kicks", 2),
+        after_failed_kicks=_require_non_negative_int(
+            raw.get("after_failed_kicks", 2), "reboot.reactive.after_failed_kicks"
+        ),
     )
 
 
