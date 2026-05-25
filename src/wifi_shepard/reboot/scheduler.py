@@ -55,6 +55,8 @@ class RebootScheduler:
         proactive = self.config.reboot.proactive
         if not proactive.enabled:
             return False
+        # `now` is local wall-clock (the daemon passes datetime.now()), so "03:30"
+        # means 03:30 in the container's TZ — set TZ in the container to pin it.
         if now.strftime("%H:%M") != proactive.schedule:
             return False
         # Fire at most once per calendar day even if the loop ticks several times
@@ -66,7 +68,13 @@ class RebootScheduler:
             return
         self._last_fired_date = now.date()
         for mac in self.config.reboot.eligible:
-            await self.attempt(mac, mode="proactive")
+            try:
+                await self.attempt(mac, mode="proactive")
+            except Exception:
+                # One device's failure (HA drop, reboot backend raise, DB lock)
+                # must not abort the sweep or kill the scheduler task: log with the
+                # MAC (the only audit trace when a reboot raises) and continue.
+                logger.exception("reboot_attempt_failed", extra={"mac": mac})
 
     async def attempt(self, mac: str, *, mode: str = "proactive") -> None:
         # Allowlist + opt-in are absolute (ADR-0006 AC-5): an ineligible MAC is

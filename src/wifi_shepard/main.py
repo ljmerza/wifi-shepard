@@ -82,7 +82,12 @@ class Daemon:
         assert self._scheduler is not None
         tick = min(self.config.scanner.poll_interval_seconds, 30)
         while not self._shutdown.is_set():
-            await self._scheduler.run_due(datetime.now())
+            try:
+                await self._scheduler.run_due(datetime.now())
+            except Exception:
+                # Never let a tick failure kill the long-lived scheduler task —
+                # it would only surface when awaited on shutdown. Log and tick on.
+                logger.exception("reboot_scheduler_tick_failed")
             try:
                 await asyncio.wait_for(self._shutdown.wait(), timeout=tick)
             except TimeoutError:
