@@ -11,6 +11,8 @@ from typing import Any
 
 import yaml
 
+from wifi_shepard.reboot.oui import looks_like_espressif
+
 logger = logging.getLogger("wifi_shepard.config")
 
 _ENV_VAR_PATTERN = re.compile(r"\$\{([A-Z_][A-Z0-9_]*)\}")
@@ -307,12 +309,27 @@ def build_config(
     controllers_typed = tuple(_build_controller_spec(c, i) for i, c in enumerate(controllers))
     safety_rails_cfg = _build_safety_rails(safety_rails)
     reboot_cfg = _build_reboot(reboot)
-    # ADR-0005 AC-4: allowlist always wins, but a MAC in both surfaces is a
-    # contradiction the operator should see at load time.
+    # Config-load advisories for the reboot: block (ADR-0005). MAC comparison uses
+    # the same canonical form as reboot.normalize_mac (strip + lowercase).
     allowlist_norm = {str(m).strip().lower() for m in allowlist}
+    eligible_norm = {m.strip().lower() for m in reboot_cfg.eligible}
     for mac in reboot_cfg.eligible:
         if mac.strip().lower() in allowlist_norm:
+            # ADR-0005 AC-4: allowlist always wins, but a MAC in both surfaces is a
+            # contradiction the operator should see at load time. No OUI warning is
+            # emitted for it — the allowlist warning is the salient signal.
             logger.warning("reboot_eligible_in_allowlist", extra={"mac": mac})
+        elif not looks_like_espressif(mac):
+            # ADR-0005 Fork B: advisory OUI pre-filter. A non-Espressif OUI in
+            # eligible is likely a typo onto a laptop/phone; the opt-in is still
+            # honored, the warning just nudges the operator to double-check.
+            logger.warning("reboot_eligible_non_espressif_oui", extra={"mac": mac})
+    # An override target for a MAC never opted into `eligible` is dead config:
+    # resolve_reboot_target gates on eligibility first, so the override never
+    # fires. Surface it at load time (mirrors the allowlist∩eligible warning).
+    for override in reboot_cfg.overrides:
+        if override.mac.strip().lower() not in eligible_norm:
+            logger.warning("reboot_override_mac_not_eligible", extra={"mac": override.mac})
     return Config(
         detection=detection,
         scanner=scanner,

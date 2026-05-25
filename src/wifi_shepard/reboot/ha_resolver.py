@@ -15,10 +15,13 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from wifi_shepard.reboot import normalize_mac
 from wifi_shepard.reboot.eligibility import is_reboot_eligible
+
+if TYPE_CHECKING:
+    from wifi_shepard.config import Config
 
 logger = logging.getLogger("wifi_shepard.reboot")
 
@@ -64,7 +67,7 @@ def _pick_ha_entity(entities: list[HAEntity]) -> tuple[str, str] | None:
 
 
 async def resolve_reboot_target(
-    mac: str, config: Any, registry: HADeviceRegistry
+    mac: str, config: Config, registry: HADeviceRegistry
 ) -> RebootTarget | None:
     # Self-defending gate: a disabled or non-opted-in MAC resolves to nothing,
     # even via an override. Resolution is never attempted for an ineligible MAC

@@ -8,12 +8,15 @@ laptop or phone that shares a vendor block with an IoT device is never eligible.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING
 
 from wifi_shepard.reboot import normalize_mac
 
+if TYPE_CHECKING:
+    from wifi_shepard.config import Config
 
-def is_reboot_eligible(mac: str, config: Any) -> bool:
+
+def is_reboot_eligible(mac: str, config: Config) -> bool:
     if not config.reboot.enabled:
         return False
     target = normalize_mac(mac)
