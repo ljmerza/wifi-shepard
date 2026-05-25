@@ -29,6 +29,16 @@ class Store(Protocol):
         attempt_group: str | None = None,
     ) -> None: ...
 
+    async def insert_reboot(
+        self,
+        *,
+        mac: str,
+        mode: str,
+        outcome: str,
+        target: str | None,
+        dry_run: bool,
+    ) -> None: ...
+
 
 SCHEMA_CLIENT_SAMPLES = """
 CREATE TABLE IF NOT EXISTS client_samples (
@@ -57,6 +67,21 @@ CREATE TABLE IF NOT EXISTS kick_events (
 );
 """
 
+# ADR-0006: audit trail for every reboot (and every would_reboot). mode is
+# 'proactive' | 'reactive'; outcome is 'fired' | 'dry_run'. target is the
+# resolved HA entity (or None when unresolved on a dry-run preview).
+SCHEMA_REBOOT_EVENTS = """
+CREATE TABLE IF NOT EXISTS reboot_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts REAL NOT NULL,
+    mac TEXT NOT NULL,
+    mode TEXT NOT NULL,
+    outcome TEXT NOT NULL,
+    target TEXT,
+    dry_run INTEGER NOT NULL DEFAULT 0
+);
+"""
+
 # Forward-compatible migration: a kick_events table created under ADR-0001 has
 # only (id, ts, mac, dry_run). Each ALTER TABLE adds one missing column,
 # backfilling existing rows with the default. ADR-0003 AC-8.
@@ -78,6 +103,7 @@ class Database:
         await self._conn.execute("PRAGMA journal_mode=WAL")
         await self._conn.execute(SCHEMA_CLIENT_SAMPLES)
         await self._conn.execute(SCHEMA_KICK_EVENTS)
+        await self._conn.execute(SCHEMA_REBOOT_EVENTS)
         await self._migrate_kick_events()
         await self._conn.commit()
 
@@ -128,6 +154,24 @@ class Database:
             "(ts, mac, dry_run, mechanism, target_bssid, attempt_group) "
             "VALUES (?, ?, ?, ?, ?, ?)",
             (time.time(), mac, 1 if dry_run else 0, mechanism, target_bssid, attempt_group),
+        )
+        await self._conn.commit()
+
+    async def insert_reboot(
+        self,
+        *,
+        mac: str,
+        mode: str,
+        outcome: str,
+        target: str | None,
+        dry_run: bool,
+    ) -> None:
+        if self._conn is None:
+            raise RuntimeError("Database.connect() must be called before insert_reboot()")
+        await self._conn.execute(
+            "INSERT INTO reboot_events (ts, mac, mode, outcome, target, dry_run) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (time.time(), mac, mode, outcome, target, 1 if dry_run else 0),
         )
         await self._conn.commit()
 
