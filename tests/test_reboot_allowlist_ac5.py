@@ -7,6 +7,8 @@ the proactive arm of AC-5; the reactive arm rides with the deferred AC-6..AC-9.
 
 from __future__ import annotations
 
+import logging
+
 import aiosqlite
 import pytest
 
@@ -63,5 +65,40 @@ async def test_ac_5_allowlisted_and_non_eligible_macs_never_reboot(temp_db_path)
             cur = await conn.execute("SELECT COUNT(*) FROM reboot_events")
             (count,) = await cur.fetchone()
         assert count == 0, f"AC-5: no reboot_events rows expected; got {count}"
+    finally:
+        await db.close()
+
+
+@pytest.mark.asyncio
+async def test_ac_5_allowlisted_mac_not_previewed_in_dry_run(temp_db_path, caplog) -> None:
+    """An allowlisted MAC must produce nothing even on the dry-run preview path —
+    no would_reboot line, no dry_run audit row. 'No reboot under any path' is
+    absolute (allowlist wins), so an ineligible MAC is dropped before preview."""
+    rebooter = FakeRebooter()
+    db = Database(temp_db_path)
+    await db.connect()
+    try:
+        config = build_config(
+            reboot=dict(
+                enabled=True,
+                dry_run=True,  # preview path
+                eligible=[ALLOWLISTED],
+                proactive=dict(enabled=True, schedule="03:30"),
+            ),
+            allowlist=[ALLOWLISTED],
+        )
+        registry = FakeHARegistry(entities_by_mac={ALLOWLISTED: [_button("button.a_restart")]})
+        scheduler = RebootScheduler(config=config, registry=registry, rebooter=rebooter, db=db)
+
+        with caplog.at_level(logging.INFO, logger="wifi_shepard.reboot"):
+            await scheduler.attempt(ALLOWLISTED)
+
+        assert not [r for r in caplog.records if r.getMessage() == "would_reboot"], (
+            "AC-5: an allowlisted MAC must not be previewed with would_reboot"
+        )
+        async with aiosqlite.connect(temp_db_path) as conn:
+            cur = await conn.execute("SELECT COUNT(*) FROM reboot_events")
+            (count,) = await cur.fetchone()
+        assert count == 0, f"AC-5: dry-run must write no row for an allowlisted MAC; got {count}"
     finally:
         await db.close()
