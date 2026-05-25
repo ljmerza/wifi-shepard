@@ -355,8 +355,7 @@ def _build_reboot_proactive(raw: Mapping[str, Any] | None) -> RebootProactiveCon
     schedule = raw.get("schedule", "03:30")
     if not isinstance(schedule, str) or _SCHEDULE_PATTERN.match(schedule) is None:
         raise ValueError(
-            f"reboot.proactive.schedule must be a 24h HH:MM time (e.g. '03:30'); "
-            f"got {schedule!r}"
+            f"reboot.proactive.schedule must be a 24h HH:MM time (e.g. '03:30'); got {schedule!r}"
         )
     return RebootProactiveConfig(
         enabled=bool(raw.get("enabled", False)),
