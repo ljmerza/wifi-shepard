@@ -93,3 +93,43 @@ async def test_ac_1_proactive_schedule_fires_rebooter_once(temp_db_path, caplog)
         )
     finally:
         await db.close()
+
+
+@pytest.mark.asyncio
+async def test_ac_2_dry_run_logs_would_reboot_and_writes_audit_row(temp_db_path, caplog) -> None:
+    rebooter = FakeRebooter()
+    db = Database(temp_db_path)
+    await db.connect()
+    try:
+        scheduler = RebootScheduler(
+            config=_config(dry_run=True),
+            registry=_registry(),
+            rebooter=rebooter,
+            db=db,
+        )
+
+        with caplog.at_level(logging.INFO, logger="wifi_shepard.reboot"):
+            await scheduler.run_due(datetime(2026, 5, 25, 3, 30))
+
+        # No network call in dry-run (mirrors would_kick).
+        assert rebooter.calls == [], (
+            f"AC-2: dry_run must make NO Rebooter call; got {rebooter.calls}"
+        )
+
+        # would_reboot line for the eligible MAC.
+        would = [r for r in caplog.records if r.getMessage() == "would_reboot"]
+        assert any(getattr(r, "mac", None) == MAC for r in would), (
+            "AC-2: a would_reboot line naming the eligible MAC must be emitted"
+        )
+
+        # Audit symmetry: a reboot_events row is still written, flagged dry_run=1.
+        async with aiosqlite.connect(temp_db_path) as conn:
+            cur = await conn.execute(
+                "SELECT mac, mode, dry_run FROM reboot_events ORDER BY id"
+            )
+            rows = await cur.fetchall()
+        assert rows == [(MAC, "proactive", 1)], (
+            f"AC-2: a dry_run=1 proactive reboot_events row expected; got {rows}"
+        )
+    finally:
+        await db.close()
