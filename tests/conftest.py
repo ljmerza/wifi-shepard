@@ -56,6 +56,23 @@ class FakeHANotifier:
 
 
 @dataclass
+class FakeRebooter:
+    """Stand-in for the reboot backend the proactive scheduler invokes (ADR-0006).
+    Records each RebootTarget passed to reboot() so tests can assert a reboot did
+    (or did not) fire — the reboot analogue of FakeController.force_reconnect_calls.
+
+    Intentionally type-agnostic (stores whatever target object the scheduler
+    resolved), so the shared conftest stays collectable without importing the
+    reboot package's RebootTarget type.
+    """
+
+    calls: list[Any] = field(default_factory=list)
+
+    async def reboot(self, target: Any) -> None:
+        self.calls.append(target)
+
+
+@dataclass
 class FakeHARegistry:
     """Stand-in for the HA device-registry transport the reboot resolver consumes
     (ADR-0005). Maps a MAC to the entity list of the HA device whose registry
