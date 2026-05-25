@@ -30,9 +30,7 @@ MAC = "08:f9:e0:ba:c4:84"
 def _registry() -> FakeHARegistry:
     return FakeHARegistry(
         entities_by_mac={
-            MAC: [
-                HAEntity(entity_id="button.fridge_restart", domain="button", device_class="restart"),
-            ]
+            MAC: [HAEntity("button.fridge_restart", "button", "restart")],
         }
     )
 
@@ -78,9 +76,7 @@ async def test_ac_1_proactive_schedule_fires_rebooter_once(temp_db_path, caplog)
 
         # reboot_events row: mode='proactive', not a dry run.
         async with aiosqlite.connect(temp_db_path) as conn:
-            cur = await conn.execute(
-                "SELECT mac, mode, dry_run FROM reboot_events ORDER BY id"
-            )
+            cur = await conn.execute("SELECT mac, mode, dry_run FROM reboot_events ORDER BY id")
             rows = await cur.fetchall()
         assert rows == [(MAC, "proactive", 0)], (
             f"AC-1: one proactive fired reboot_events row expected; got {rows}"
@@ -124,9 +120,7 @@ async def test_ac_2_dry_run_logs_would_reboot_and_writes_audit_row(temp_db_path,
 
         # Audit symmetry: a reboot_events row is still written, flagged dry_run=1.
         async with aiosqlite.connect(temp_db_path) as conn:
-            cur = await conn.execute(
-                "SELECT mac, mode, dry_run FROM reboot_events ORDER BY id"
-            )
+            cur = await conn.execute("SELECT mac, mode, dry_run FROM reboot_events ORDER BY id")
             rows = await cur.fetchall()
         assert rows == [(MAC, "proactive", 1)], (
             f"AC-2: a dry_run=1 proactive reboot_events row expected; got {rows}"

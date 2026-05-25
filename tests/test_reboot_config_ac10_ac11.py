@@ -58,9 +58,7 @@ async def test_ac_10_no_reboot_block_starts_no_scheduler(temp_db_path, tmp_path)
 
     cfg = tmp_path / "config.yaml"
     cfg.write_text(_BASE_YAML)
-    daemon = build_daemon(
-        config_path=cfg, db_path=temp_db_path, controllers=[FakeController()]
-    )
+    daemon = build_daemon(config_path=cfg, db_path=temp_db_path, controllers=[FakeController()])
 
     assert daemon._scheduler is None, "AC-10: no reboot block must build no scheduler"
 
@@ -83,9 +81,7 @@ async def test_ac_10_proactive_enabled_with_backend_builds_scheduler(
 
     cfg = tmp_path / "config.yaml"
     cfg.write_text(_BASE_YAML + _REBOOT_ON_YAML)
-    registry = FakeHARegistry(
-        entities_by_mac={MAC: [HAEntity("button.x", "button", "restart")]}
-    )
+    registry = FakeHARegistry(entities_by_mac={MAC: [HAEntity("button.x", "button", "restart")]})
     daemon = build_daemon(
         config_path=cfg,
         db_path=temp_db_path,
@@ -129,7 +125,7 @@ def test_ac_11_unknown_probe_method_rejected() -> None:
 def test_ac_11_yaml_bad_schedule_fails_closed(tmp_path: Path) -> None:
     cfg = tmp_path / "config.yaml"
     cfg.write_text(
-        f'reboot:\n  enabled: true\n  eligible:\n    - {MAC}\n'
+        f"reboot:\n  enabled: true\n  eligible:\n    - {MAC}\n"
         f'  proactive:\n    enabled: true\n    schedule: "bedtime"\n'
     )
     with pytest.raises(ValueError, match="schedule"):

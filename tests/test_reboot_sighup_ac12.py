@@ -33,11 +33,9 @@ def _config(*, schedule: str, per_device_seconds: int) -> object:
 
 
 @pytest.mark.asyncio
-async def test_ac_12_sighup_updates_schedule_cooldown_preserving_state(temp_db_path, caplog) -> None:
+async def test_ac_12_sighup_reload_preserves_cooldown_state(temp_db_path, caplog) -> None:
     clock = [100.0]
-    registry = FakeHARegistry(
-        entities_by_mac={MAC: [HAEntity("button.x", "button", "restart")]}
-    )
+    registry = FakeHARegistry(entities_by_mac={MAC: [HAEntity("button.x", "button", "restart")]})
     db = Database(temp_db_path)
     await db.connect()
     try:

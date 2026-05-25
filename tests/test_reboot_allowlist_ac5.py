@@ -47,9 +47,7 @@ async def test_ac_5_allowlisted_and_non_eligible_macs_never_reboot(temp_db_path)
                 NOT_ELIGIBLE: [_button("button.b_restart")],
             }
         )
-        scheduler = RebootScheduler(
-            config=config, registry=registry, rebooter=rebooter, db=db
-        )
+        scheduler = RebootScheduler(config=config, registry=registry, rebooter=rebooter, db=db)
 
         await scheduler.attempt(ALLOWLISTED)
         await scheduler.attempt(NOT_ELIGIBLE)

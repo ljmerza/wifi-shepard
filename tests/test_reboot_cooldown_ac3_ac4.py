@@ -29,9 +29,7 @@ MAC = "08:f9:e0:ba:c4:84"
 
 def _registry() -> FakeHARegistry:
     return FakeHARegistry(
-        entities_by_mac={
-            MAC: [HAEntity(entity_id="button.fridge_restart", domain="button", device_class="restart")]
-        }
+        entities_by_mac={MAC: [HAEntity("button.fridge_restart", "button", "restart")]}
     )
 
 
