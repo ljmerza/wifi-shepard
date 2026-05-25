@@ -49,6 +49,14 @@ def _require_non_negative_int(value: Any, key: str) -> int:
     return value
 
 
+def _require_bool(value: Any, key: str) -> bool:
+    # Fail closed on a non-bool toggle: `enabled: "no"` (a quoted string) would
+    # otherwise coerce truthy and silently arm a guard the operator meant to disable.
+    if not isinstance(value, bool):
+        raise ValueError(f"{key} must be a boolean; got {value!r}")
+    return value
+
+
 def _interpolate_env(text: str) -> str:
     def repl(match: re.Match[str]) -> str:
         name = match.group(1)
@@ -358,7 +366,7 @@ def _build_reboot_proactive(raw: Mapping[str, Any] | None) -> RebootProactiveCon
             f"reboot.proactive.schedule must be a 24h HH:MM time (e.g. '03:30'); got {schedule!r}"
         )
     return RebootProactiveConfig(
-        enabled=bool(raw.get("enabled", False)),
+        enabled=_require_bool(raw.get("enabled", False), "reboot.proactive.enabled"),
         schedule=schedule,
     )
 
@@ -397,9 +405,11 @@ def _build_reboot_reactive(raw: Mapping[str, Any] | None) -> RebootReactiveConfi
             ),
         )
     return RebootReactiveConfig(
-        enabled=bool(raw.get("enabled", False)),
+        enabled=_require_bool(raw.get("enabled", False), "reboot.reactive.enabled"),
         probe=probe,
-        require_signal_adequate=bool(raw.get("require_signal_adequate", True)),
+        require_signal_adequate=_require_bool(
+            raw.get("require_signal_adequate", True), "reboot.reactive.require_signal_adequate"
+        ),
         after_failed_kicks=_require_non_negative_int(
             raw.get("after_failed_kicks", 2), "reboot.reactive.after_failed_kicks"
         ),

@@ -122,6 +122,12 @@ def test_ac_11_unknown_probe_method_rejected() -> None:
         build_config(reboot=_reboot(reactive=dict(probe=dict(method="telepathy"))))
 
 
+def test_ac_11_non_bool_proactive_enabled_rejected() -> None:
+    # A quoted "no" is a string, not a YAML bool — must fail closed, not coerce truthy.
+    with pytest.raises(ValueError, match="proactive.enabled"):
+        build_config(reboot=_reboot(proactive=dict(enabled="no", schedule="03:30")))
+
+
 def test_ac_11_yaml_bad_schedule_fails_closed(tmp_path: Path) -> None:
     cfg = tmp_path / "config.yaml"
     cfg.write_text(
