@@ -59,6 +59,17 @@ class RebootScheduler:
             await self.attempt(mac, mode="proactive")
 
     async def attempt(self, mac: str, *, mode: str = "proactive") -> None:
+        if self.config.reboot.dry_run:
+            # Preview only: log would_reboot and write an audit row flagged
+            # dry_run=1 (symmetry with the fired path, ADR-0004 AC-6), make no
+            # network call. Mirrors the would_kick bypass.
+            target = await resolve_reboot_target(mac, self.config, self.registry)
+            entity = target.entity_id if target is not None else None
+            logger.info("would_reboot", extra={"mac": mac, "mode": mode, "target": entity})
+            await self.db.insert_reboot(
+                mac=mac, mode=mode, outcome="dry_run", target=entity, dry_run=True
+            )
+            return
         target = await resolve_reboot_target(mac, self.config, self.registry)
         if target is None:
             return  # resolver already logged reboot_target_unresolved
