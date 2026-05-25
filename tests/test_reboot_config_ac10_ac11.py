@@ -20,6 +20,7 @@ import aiosqlite
 import pytest
 
 from tests.conftest import FakeController, FakeHARegistry, FakeRebooter
+from wifi_shepard.config import build_config, load_config_from_path
 from wifi_shepard.reboot.ha_resolver import HAEntity
 
 MAC = "08:f9:e0:ba:c4:84"
@@ -95,3 +96,41 @@ async def test_ac_10_proactive_enabled_with_backend_builds_scheduler(
     assert daemon._scheduler is not None, (
         "AC-10: proactive.enabled with a backend wired must build a scheduler"
     )
+
+
+def _reboot(**extra) -> dict:
+    base = dict(enabled=True, eligible=[MAC])
+    base.update(extra)
+    return base
+
+
+def test_ac_11_non_hhmm_schedule_rejected() -> None:
+    with pytest.raises(ValueError, match="schedule"):
+        build_config(reboot=_reboot(proactive=dict(enabled=True, schedule="25:99")))
+
+
+def test_ac_11_negative_cooldown_rejected() -> None:
+    with pytest.raises(ValueError, match="per_device_seconds"):
+        build_config(reboot=_reboot(cooldown=dict(per_device_seconds=-1)))
+
+
+def test_ac_11_bool_cooldown_rejected() -> None:
+    # YAML parses `yes`/`no` as Python bool (an int subclass). Reject explicitly,
+    # mirroring ADR-0004 AC-7's bool-as-int guard.
+    with pytest.raises(ValueError, match="max_per_device_per_day"):
+        build_config(reboot=_reboot(cooldown=dict(max_per_device_per_day=True)))
+
+
+def test_ac_11_unknown_probe_method_rejected() -> None:
+    with pytest.raises(ValueError, match="method"):
+        build_config(reboot=_reboot(reactive=dict(probe=dict(method="telepathy"))))
+
+
+def test_ac_11_yaml_bad_schedule_fails_closed(tmp_path: Path) -> None:
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text(
+        f'reboot:\n  enabled: true\n  eligible:\n    - {MAC}\n'
+        f'  proactive:\n    enabled: true\n    schedule: "bedtime"\n'
+    )
+    with pytest.raises(ValueError, match="schedule"):
+        load_config_from_path(cfg)
