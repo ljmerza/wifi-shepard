@@ -100,3 +100,35 @@ async def test_ac_3_second_reboot_within_cooldown_is_deferred(temp_db_path, capl
         )
     finally:
         await db.close()
+
+
+@pytest.mark.asyncio
+async def test_ac_4_fifth_reboot_in_a_day_is_deferred_daily_cap(temp_db_path, caplog) -> None:
+    clock = [100.0]
+    db = Database(temp_db_path)
+    await db.connect()
+    try:
+        # per_device_seconds=0 isolates the daily cap from the single-flight cooldown.
+        scheduler = _scheduler(db, clock, per_device_seconds=0, max_per_day=4)
+
+        for i in range(4):
+            clock[0] = 100.0 + i  # distinct, all within the 24h window
+            await scheduler.attempt(MAC)
+        assert len(scheduler.rebooter.calls) == 4, (
+            f"AC-4: first 4 reboots in the window must fire; got {scheduler.rebooter.calls}"
+        )
+
+        clock[0] = 200.0
+        with caplog.at_level(logging.INFO, logger="wifi_shepard.reboot"):
+            await scheduler.attempt(MAC)  # 5th
+
+        assert len(scheduler.rebooter.calls) == 4, (
+            f"AC-4: the 5th reboot must be capped; got {scheduler.rebooter.calls}"
+        )
+        deferred = [r for r in caplog.records if r.getMessage() == "reboot_deferred"]
+        assert len(deferred) == 1
+        assert getattr(deferred[0], "reason", None) == "daily_cap", (
+            f"AC-4: reason must be 'daily_cap'; got {getattr(deferred[0], 'reason', None)!r}"
+        )
+    finally:
+        await db.close()
