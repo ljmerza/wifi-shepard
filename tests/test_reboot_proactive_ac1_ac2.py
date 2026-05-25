@@ -74,6 +74,14 @@ async def test_ac_1_proactive_schedule_fires_rebooter_once(temp_db_path, caplog)
             f"AC-1: schedule must fire exactly once per day; got {rebooter.calls}"
         )
 
+        # A NEW day but an off-schedule minute must NOT fire — proving the clock
+        # match, not just the once-per-day date gate (a stub is_due()->True fails
+        # here even though the date gate would permit a new day).
+        await scheduler.run_due(datetime(2026, 5, 26, 3, 31))
+        assert len(rebooter.calls) == 1, (
+            f"AC-1: must only fire at the scheduled minute; got {rebooter.calls}"
+        )
+
         # reboot_events row: mode='proactive', not a dry run.
         async with aiosqlite.connect(temp_db_path) as conn:
             cur = await conn.execute("SELECT mac, mode, dry_run FROM reboot_events ORDER BY id")
