@@ -105,6 +105,8 @@ Two independent forks: **(A) which remediation model**, and **(B) the reactive t
 
 ## Decision
 
+> **Implementation note (Phase 1, PR #11):** the `Rebooter` Protocol and scheduler shipped in `src/wifi_shepard/reboot/`, not a new `remediators/` package as written below — for consistency with ADR-0005's already-landed `reboot/` modules (`eligibility.py`, `ha_resolver.py`). Read the `remediators/` references throughout this ADR as `reboot/`.
+
 **Chosen:** A3 (Both, phased) + B3 (active probe + passive corroboration), with the `Rebooter` Protocol in a new `remediators/` package and all cooldown/audit/dry-run machinery reused from ADR-0004/0005/0002.
 
 **Rationale:**
