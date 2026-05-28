@@ -27,11 +27,34 @@ _VALID_KICK_MECHANISMS: frozenset[str] = frozenset({"deauth", "btm", "auto"})
 # disabling reboot resolution.
 _VALID_REBOOT_RESOLVERS: frozenset[str] = frozenset({"home_assistant"})
 
+# ADR-0006: reactive probe transport is a closed set; the proactive schedule is a
+# 24h HH:MM local time. Both fail closed so a typo can't silently disable a guard.
+_VALID_PROBE_METHODS: frozenset[str] = frozenset({"ping", "http"})
+_SCHEDULE_PATTERN = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
+
 _MAC_PATTERN = re.compile(r"^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$")
 
 
 def _is_valid_mac(value: Any) -> bool:
     return isinstance(value, str) and _MAC_PATTERN.match(value) is not None
+
+
+def _require_non_negative_int(value: Any, key: str) -> int:
+    # Reject bool explicitly: YAML parses yes/no into Python bool, an int subclass,
+    # so a bare isinstance(int) check would silently accept it (ADR-0004 AC-7).
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"{key} must be a non-negative integer; got {value!r}")
+    if value < 0:
+        raise ValueError(f"{key} must be >= 0; got {value!r}")
+    return value
+
+
+def _require_bool(value: Any, key: str) -> bool:
+    # Fail closed on a non-bool toggle: `enabled: "no"` (a quoted string) would
+    # otherwise coerce truthy and silently arm a guard the operator meant to disable.
+    if not isinstance(value, bool):
+        raise ValueError(f"{key} must be a boolean; got {value!r}")
+    return value
 
 
 def _interpolate_env(text: str) -> str:
@@ -123,13 +146,53 @@ class RebootOverride:
 
 
 @dataclass(frozen=True)
+class RebootCooldownConfig:
+    # ADR-0006: per-device reboot rate limits, reusing the ADR-0004 posture.
+    # 0 = off for the single-flight cooldown; the daily cap is a rolling 24h window.
+    per_device_seconds: int = 3600
+    max_per_device_per_day: int = 4
+
+
+@dataclass(frozen=True)
+class RebootProactiveConfig:
+    # ADR-0006 Phase 1: scheduled reboots of eligible MACs at a daily HH:MM local time.
+    enabled: bool = False
+    schedule: str = "03:30"
+
+
+@dataclass(frozen=True)
+class RebootProbeConfig:
+    # ADR-0006 Phase 2 (reactive): active reachability probe. Schema only this PR.
+    method: str = "ping"
+    interval_seconds: int = 60
+    window_samples: int = 5
+    loss_pct_min: int = 30
+
+
+@dataclass(frozen=True)
+class RebootReactiveConfig:
+    # ADR-0006 Phase 2+ (reactive escalation). Ships off; schema validated now so
+    # the config contract is locked before the probe loop lands.
+    enabled: bool = False
+    probe: RebootProbeConfig = field(default_factory=RebootProbeConfig)
+    require_signal_adequate: bool = True
+    after_failed_kicks: int = 2
+
+
+@dataclass(frozen=True)
 class RebootConfig:
     # ADR-0005: opt-in, default-off. `eligible` lists MACs the operator allows
     # rebooting; HA resolves *how*. `overrides` are the explicit fallback targets.
+    # ADR-0006 adds dry_run (log would_reboot only, like would_kick) plus the
+    # cooldown / proactive / reactive sub-blocks.
     enabled: bool = False
     resolver: str = "home_assistant"
+    dry_run: bool = True
     eligible: tuple[str, ...] = ()
     overrides: tuple[RebootOverride, ...] = ()
+    cooldown: RebootCooldownConfig = field(default_factory=RebootCooldownConfig)
+    proactive: RebootProactiveConfig = field(default_factory=RebootProactiveConfig)
+    reactive: RebootReactiveConfig = field(default_factory=RebootReactiveConfig)
 
 
 @dataclass(frozen=True)
@@ -253,11 +316,103 @@ def _build_reboot(raw: Mapping[str, Any] | None) -> RebootConfig:
             raise ValueError(f"reboot.overrides[{i}].name must be a string when set; got {name!r}")
         overrides.append(RebootOverride(mac=str(mac), name=name, ha_entity=ha_entity))
 
+    dry_run = raw.get("dry_run", True)
+    if not isinstance(dry_run, bool):
+        raise ValueError(f"reboot.dry_run must be a boolean; got {dry_run!r}")
+
+    cooldown = _build_reboot_cooldown(raw.get("cooldown"))
+    proactive = _build_reboot_proactive(raw.get("proactive"))
+    reactive = _build_reboot_reactive(raw.get("reactive"))
+
     return RebootConfig(
         enabled=enabled,
         resolver=str(resolver),
+        dry_run=dry_run,
         eligible=tuple(eligible),
         overrides=tuple(overrides),
+        cooldown=cooldown,
+        proactive=proactive,
+        reactive=reactive,
+    )
+
+
+def _build_reboot_cooldown(raw: Mapping[str, Any] | None) -> RebootCooldownConfig:
+    if raw is None:
+        return RebootCooldownConfig()
+    if not isinstance(raw, Mapping):
+        raise ValueError(
+            f"reboot.cooldown must be a YAML mapping, got {type(raw).__name__}: {raw!r}"
+        )
+    return RebootCooldownConfig(
+        per_device_seconds=_require_non_negative_int(
+            raw.get("per_device_seconds", 3600), "reboot.cooldown.per_device_seconds"
+        ),
+        max_per_device_per_day=_require_non_negative_int(
+            raw.get("max_per_device_per_day", 4), "reboot.cooldown.max_per_device_per_day"
+        ),
+    )
+
+
+def _build_reboot_proactive(raw: Mapping[str, Any] | None) -> RebootProactiveConfig:
+    if raw is None:
+        return RebootProactiveConfig()
+    if not isinstance(raw, Mapping):
+        raise ValueError(
+            f"reboot.proactive must be a YAML mapping, got {type(raw).__name__}: {raw!r}"
+        )
+    schedule = raw.get("schedule", "03:30")
+    if not isinstance(schedule, str) or _SCHEDULE_PATTERN.match(schedule) is None:
+        raise ValueError(
+            f"reboot.proactive.schedule must be a 24h HH:MM time (e.g. '03:30'); got {schedule!r}"
+        )
+    return RebootProactiveConfig(
+        enabled=_require_bool(raw.get("enabled", False), "reboot.proactive.enabled"),
+        schedule=schedule,
+    )
+
+
+def _build_reboot_reactive(raw: Mapping[str, Any] | None) -> RebootReactiveConfig:
+    if raw is None:
+        return RebootReactiveConfig()
+    if not isinstance(raw, Mapping):
+        raise ValueError(
+            f"reboot.reactive must be a YAML mapping, got {type(raw).__name__}: {raw!r}"
+        )
+    probe_raw = raw.get("probe")
+    probe = RebootProbeConfig()
+    if probe_raw is not None:
+        if not isinstance(probe_raw, Mapping):
+            raise ValueError(
+                f"reboot.reactive.probe must be a YAML mapping, got "
+                f"{type(probe_raw).__name__}: {probe_raw!r}"
+            )
+        method = probe_raw.get("method", "ping")
+        if method not in _VALID_PROBE_METHODS:
+            raise ValueError(
+                f"reboot.reactive.probe.method must be one of "
+                f"{sorted(_VALID_PROBE_METHODS)}; got {method!r}"
+            )
+        probe = RebootProbeConfig(
+            method=str(method),
+            interval_seconds=_require_non_negative_int(
+                probe_raw.get("interval_seconds", 60), "reboot.reactive.probe.interval_seconds"
+            ),
+            window_samples=_require_non_negative_int(
+                probe_raw.get("window_samples", 5), "reboot.reactive.probe.window_samples"
+            ),
+            loss_pct_min=_require_non_negative_int(
+                probe_raw.get("loss_pct_min", 30), "reboot.reactive.probe.loss_pct_min"
+            ),
+        )
+    return RebootReactiveConfig(
+        enabled=_require_bool(raw.get("enabled", False), "reboot.reactive.enabled"),
+        probe=probe,
+        require_signal_adequate=_require_bool(
+            raw.get("require_signal_adequate", True), "reboot.reactive.require_signal_adequate"
+        ),
+        after_failed_kicks=_require_non_negative_int(
+            raw.get("after_failed_kicks", 2), "reboot.reactive.after_failed_kicks"
+        ),
     )
 
 
