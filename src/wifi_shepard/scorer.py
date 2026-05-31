@@ -14,6 +14,12 @@ def is_bad_state(samples: list[Any], thresholds: dict[str, Any], radios: tuple[s
     for sample in samples:
         if sample.radio not in radios:
             return False
+        # ADR-0008 AP-saturation gate: only act on a saturated AP (PLAN.md §3).
+        # .get(..., 0) keeps it off when ap_cu_total_min is absent/0, so a 3-key
+        # thresholds dict and the shipped default behave as before. UniFi writes 0
+        # when CU is unavailable, so unknown CU fails closed (0 < any positive floor).
+        if (sample.ap_cu_total or 0) < thresholds.get("ap_cu_total_min", 0):
+            return False
         if sample.signal >= thresholds["signal_dbm_max"]:
             return False
         if sample.tx_rate_kbps >= thresholds["tx_rate_kbps_max"]:
