@@ -97,7 +97,7 @@ The structural fork is **where per-MAC backoff state lives** (cooldown timer, ho
 - **Quarantine stays in-memory and unchanged.** Cooldowns/caps layer *beneath* it; `quarantine_after_kicks` and `should_quarantine` are untouched (`test_quarantine_ac5` stays green). The "device may be defective" signal is the **existing** quarantine notification (ADR-0001 AC-5), not a new event. Consequence: a restart resets the quarantine *count* (the durable daily cap still bounds the device); the `quarantine_notified` dedup flag staying in memory means at worst one duplicate quarantine notice after a restart.
 - **Quiet-hours precedence: per-field "more-conservative-wins."** During the window, the effective threshold per field is the more-conservative of (per-MAC-resolved) and (`override_threshold`): `tx_rate_kbps_max → min`, `retry_pct_max → max`, `signal_dbm_max → min` (more-negative). Quiet hours therefore never *loosens* a per-MAC override. Fields absent from `override_threshold` keep their resolved value.
 - **AP-saturation gate fails closed, not silently.** `quiet_hours.override_threshold` accepts only `tx_rate_kbps_max` / `retry_pct_max` / `signal_dbm_max`. `ap_cu_total_min` (and any unknown key) is rejected at parse time with a message pointing to the follow-up §3 AP-gate ADR.
-- **Caps default ON.** `max_kicks_per_hour: 3`, `max_kicks_per_day: 10`, `cooldowns_seconds: [300,1800,7200,43200,86400]` are the defaults (PLAN §4 treats them as core safety; `0`/`[]` disables). `dry_run` (default true) still gates all real action, so the conservative defaults only bite once the operator opts into live kicks.
+- **Caps/cooldowns default OFF in code, ON in the shipped config.** Mirroring ADR-0004's `safety_rails`, `build_config` and the loader default `max_kicks_per_hour`/`max_kicks_per_day` to `0` and `cooldowns_seconds` to `[]` (disabled) when the `backoff:` keys are omitted; `config.example.yaml`/`config.yaml` ship the PLAN §4 values (`3`, `10`, `[300,1800,7200,43200,86400]`). So a copied-from-example deployment is protected, the existing test suite (which omits these keys) is unchanged, and `dry_run` gates real action regardless. The per-MAC gate is skipped entirely — no DB read — when the feature is off for a MAC.
 
 ## Acceptance Criteria
 
@@ -122,7 +122,7 @@ The structural fork is **where per-MAC backoff state lives** (cooldown timer, ho
 
 - One `SELECT` per fresh-kick decision (negligible at home-lab scale; an index is the escape hatch if it ever isn't).
 - Quarantine *count* and the `quarantine_notified` flag remain in memory, so a restart re-evaluates a quarantined device and may emit one duplicate quarantine notice. The durable daily cap bounds the blast radius.
-- Caps defaulting ON makes a previously-unspecified `backoff:` block more conservative on upgrade — intended (PLAN §4 safety), and masked by `dry_run` until the operator goes live.
+- Per-MAC caps are opt-in in code (off when the `backoff:` keys are omitted), so a hand-rolled minimal config has no per-MAC floor until the keys are set — mitigated by shipping them enabled in `config.example.yaml` and by `dry_run` defaulting true.
 
 ### Risks & Mitigations
 
@@ -131,7 +131,7 @@ The structural fork is **where per-MAC backoff state lives** (cooldown timer, ho
 | Quiet-hours wraparound (23:00–07:00) or DST handled wrong → kicks in the quiet window | Medium | Medium | Tz-aware compare via `zoneinfo`; explicit wrap test; mirror `reboot/scheduler.py`. |
 | Escalation never resets (run window too long) or resets too eagerly | Low | Medium | Recovery window = `max(cooldowns_seconds)`; covered by AC-2 + a reset test. |
 | `kick_events` query accidentally counts dry-run rows | Low | Medium | Filter `dry_run = 0` in the query; assert in the cap tests. |
-| Caps default-on surprises an operator on upgrade | Low | Low | Documented here + in `config.example.yaml`; `dry_run` gates real action. |
+| Operator's minimal config omits the caps → no per-MAC floor | Low | Medium | Shipped `config.example.yaml`/`config.yaml` enable them; runbook says copy the example; `dry_run` gates real action. |
 
 ## Implementation Plan
 

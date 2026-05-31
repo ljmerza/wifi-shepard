@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import time
 from collections import deque
+from collections.abc import Callable
 from typing import Any
 
-from .resolution import resolve_thresholds
+from .resolution import apply_quiet_hours, quiet_hours_active, resolve_thresholds
 
 
 def is_bad_state(samples: list[Any], thresholds: dict[str, Any], radios: tuple[str, ...]) -> bool:
@@ -26,9 +28,13 @@ def is_bad_state(samples: list[Any], thresholds: dict[str, Any], radios: tuple[s
 
 
 class Scorer:
-    def __init__(self, config: Any) -> None:
+    def __init__(self, config: Any, *, wall_now_fn: Callable[[], float] = time.time) -> None:
         self.config = config
         self._windows: dict[str, deque] = {}
+        # Injected wall clock for quiet-hours evaluation (tests pass a lambda /
+        # time-machine); production uses time.time. Monotonic is unusable here —
+        # quiet hours is a wall-clock-of-day concept (ADR-0007).
+        self.wall_now_fn = wall_now_fn
 
     def _window(self, mac: str) -> deque:
         if mac not in self._windows:
@@ -40,6 +46,11 @@ class Scorer:
         if mac in self.config.allowlist:
             return None
         thresholds = resolve_thresholds(mac, self.config)
+        # ADR-0007: during quiet hours, tighten to the stricter override thresholds
+        # (per-field more-conservative-wins) before testing bad-state.
+        quiet_hours = self.config.quiet_hours
+        if quiet_hours is not None and quiet_hours_active(self.wall_now_fn(), quiet_hours):
+            thresholds = apply_quiet_hours(thresholds, quiet_hours)
         radios = self.config.detection.radios
         window = self._window(mac)
         window.append(client)

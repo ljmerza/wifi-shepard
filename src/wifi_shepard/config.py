@@ -8,6 +8,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import yaml
 
@@ -116,7 +117,28 @@ class ScannerConfig:
 
 @dataclass(frozen=True)
 class BackoffConfig:
+    # ADR-0007: per-MAC escalating backoff + hard caps. cooldowns_seconds is
+    # indexed by the trailing run of recent kicks (clamped to the last entry);
+    # the caps are rolling 1h / 24h windows. All three are opt-in (empty / 0 =
+    # off), mirroring ADR-0004 safety_rails; config.example.yaml ships them on.
     quarantine_after_kicks: int = 5
+    cooldowns_seconds: tuple[int, ...] = ()
+    max_kicks_per_hour: int = 0
+    max_kicks_per_day: int = 0
+
+
+@dataclass(frozen=True)
+class QuietHoursConfig:
+    # ADR-0007: during [start, end) local time, a kick requires the *stricter*
+    # override thresholds (per-field more-conservative-wins). Times are 24h
+    # HH:MM; timezone is an IANA name. ap_cu_total_min is intentionally absent —
+    # the §3 AP-saturation gate is a separate follow-up; the loader rejects it.
+    start: str
+    end: str
+    timezone: str
+    tx_rate_kbps_max: int | None = None
+    retry_pct_max: int | None = None
+    signal_dbm_max: int | None = None
 
 
 @dataclass(frozen=True)
@@ -134,6 +156,9 @@ class OverrideEntry:
     retry_pct_max: int | None = None
     signal_dbm_max: int | None = None
     kick_mechanism: str | None = None
+    # ADR-0007: per-MAC kick-cap overrides (override > global). None = inherit.
+    max_kicks_per_hour: int | None = None
+    max_kicks_per_day: int | None = None
 
 
 @dataclass(frozen=True)
@@ -212,6 +237,7 @@ class Config:
     scanner: ScannerConfig = field(default_factory=ScannerConfig)
     backoff: BackoffConfig = field(default_factory=BackoffConfig)
     safety_rails: SafetyRailsConfig = field(default_factory=SafetyRailsConfig)
+    quiet_hours: QuietHoursConfig | None = None
     reboot: RebootConfig = field(default_factory=RebootConfig)
     overrides: tuple[OverrideEntry, ...] = ()
     allowlist: tuple[str, ...] = ()
@@ -416,6 +442,76 @@ def _build_reboot_reactive(raw: Mapping[str, Any] | None) -> RebootReactiveConfi
     )
 
 
+_QUIET_HOURS_THRESHOLD_FIELDS: frozenset[str] = frozenset(
+    {"tx_rate_kbps_max", "retry_pct_max", "signal_dbm_max"}
+)
+
+
+def _build_quiet_hours(raw: Mapping[str, Any] | None) -> QuietHoursConfig | None:
+    """Parse + validate the quiet_hours: block (ADR-0007). None (no block) → disabled.
+
+    Fail-closed: bad HH:MM, an unknown IANA timezone, or an unsupported
+    override_threshold key (notably ap_cu_total_min — the §3 AP-saturation gate is
+    not implemented yet) all raise at parse time rather than silently disable a
+    guard the operator believes is active.
+    """
+    if raw is None:
+        return None
+    if not isinstance(raw, Mapping):
+        raise ValueError(f"quiet_hours must be a YAML mapping, got {type(raw).__name__}: {raw!r}")
+    for key in ("start", "end", "timezone"):
+        if not isinstance(raw.get(key), str) or not raw[key]:
+            raise ValueError(f"quiet_hours.{key} is required and must be a non-empty string")
+    for key in ("start", "end"):
+        if _SCHEDULE_PATTERN.match(raw[key]) is None:
+            raise ValueError(
+                f"quiet_hours.{key} must be a 24h HH:MM time (e.g. '23:00'); got {raw[key]!r}"
+            )
+    try:
+        ZoneInfo(raw["timezone"])
+    except (ZoneInfoNotFoundError, ValueError) as exc:
+        raise ValueError(
+            f"quiet_hours.timezone must be a valid IANA zone; got {raw['timezone']!r}"
+        ) from exc
+
+    override_raw = raw.get("override_threshold") or {}
+    if not isinstance(override_raw, Mapping):
+        raise ValueError(
+            f"quiet_hours.override_threshold must be a YAML mapping, got "
+            f"{type(override_raw).__name__}: {override_raw!r}"
+        )
+    thresholds: dict[str, int] = {}
+    for key, value in override_raw.items():
+        if key == "ap_cu_total_min":
+            raise ValueError(
+                "quiet_hours.override_threshold.ap_cu_total_min is not yet supported — the "
+                "AP-saturation gate (PLAN.md §3 detection.ap_cu_total_min) is unimplemented and "
+                "tracked in a follow-up ADR. Remove this key until then."
+            )
+        if key not in _QUIET_HOURS_THRESHOLD_FIELDS:
+            raise ValueError(
+                f"quiet_hours.override_threshold.{key} is not a recognized threshold; "
+                f"supported: {sorted(_QUIET_HOURS_THRESHOLD_FIELDS)}"
+            )
+        # signal_dbm_max is negative; tx_rate/retry are non-negative. Reject
+        # bool/non-int either way.
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise ValueError(
+                f"quiet_hours.override_threshold.{key} must be an integer; got {value!r}"
+            )
+        if key != "signal_dbm_max" and value < 0:
+            raise ValueError(f"quiet_hours.override_threshold.{key} must be >= 0; got {value!r}")
+        thresholds[key] = value
+    return QuietHoursConfig(
+        start=raw["start"],
+        end=raw["end"],
+        timezone=raw["timezone"],
+        tx_rate_kbps_max=thresholds.get("tx_rate_kbps_max"),
+        retry_pct_max=thresholds.get("retry_pct_max"),
+        signal_dbm_max=thresholds.get("signal_dbm_max"),
+    )
+
+
 def build_config(
     *,
     tx_rate_kbps_max: int = 12000,
@@ -426,8 +522,12 @@ def build_config(
     window_samples: int = 5,
     poll_interval_seconds: int = 60,
     quarantine_after_kicks: int = 5,
+    cooldowns_seconds: Sequence[int] = (),
+    max_kicks_per_hour: int = 0,
+    max_kicks_per_day: int = 0,
     kick_mechanism: str = "deauth",
     safety_rails: Mapping[str, Any] | None = None,
+    quiet_hours: Mapping[str, Any] | None = None,
     reboot: Mapping[str, Any] | None = None,
     overrides: list[dict[str, Any]] | tuple[dict[str, Any], ...] = (),
     allowlist: list[str] | tuple[str, ...] = (),
@@ -450,7 +550,17 @@ def build_config(
         dry_run=dry_run,
         kick_mechanism=kick_mechanism,
     )
-    backoff = BackoffConfig(quarantine_after_kicks=quarantine_after_kicks)
+    backoff = BackoffConfig(
+        quarantine_after_kicks=quarantine_after_kicks,
+        cooldowns_seconds=tuple(
+            _require_non_negative_int(c, f"backoff.cooldowns_seconds[{i}]")
+            for i, c in enumerate(cooldowns_seconds)
+        ),
+        max_kicks_per_hour=_require_non_negative_int(
+            max_kicks_per_hour, "backoff.max_kicks_per_hour"
+        ),
+        max_kicks_per_day=_require_non_negative_int(max_kicks_per_day, "backoff.max_kicks_per_day"),
+    )
     known = {f.name for f in dataclasses.fields(OverrideEntry)}
     overrides_typed = tuple(
         OverrideEntry(**{k: v for k, v in o.items() if k in known}) for o in overrides
@@ -461,8 +571,13 @@ def build_config(
                 f"overrides[mac={entry.mac}].kick_mechanism must be one of "
                 f"{sorted(_VALID_KICK_MECHANISMS)}; got {entry.kick_mechanism!r}"
             )
+        for cap_field in ("max_kicks_per_hour", "max_kicks_per_day"):
+            cap_value = getattr(entry, cap_field)
+            if cap_value is not None:
+                _require_non_negative_int(cap_value, f"overrides[mac={entry.mac}].{cap_field}")
     controllers_typed = tuple(_build_controller_spec(c, i) for i, c in enumerate(controllers))
     safety_rails_cfg = _build_safety_rails(safety_rails)
+    quiet_hours_cfg = _build_quiet_hours(quiet_hours)
     reboot_cfg = _build_reboot(reboot)
     # Config-load advisories for the reboot: block (ADR-0005). MAC comparison uses
     # the same canonical form as reboot.normalize_mac (strip + lowercase).
@@ -490,6 +605,7 @@ def build_config(
         scanner=scanner,
         backoff=backoff,
         safety_rails=safety_rails_cfg,
+        quiet_hours=quiet_hours_cfg,
         reboot=reboot_cfg,
         overrides=overrides_typed,
         allowlist=tuple(allowlist),
@@ -544,7 +660,13 @@ def load_config_from_path(path: Path | str) -> Config:
         signal_dbm_max=int(detection_data.get("signal_dbm_max", -70)),
         radios=radios,
         quarantine_after_kicks=int(backoff_data.get("quarantine_after_kicks", 5)),
+        cooldowns_seconds=_require_sequence(
+            backoff_data.get("cooldowns_seconds"), "backoff.cooldowns_seconds"
+        ),
+        max_kicks_per_hour=backoff_data.get("max_kicks_per_hour", 0),
+        max_kicks_per_day=backoff_data.get("max_kicks_per_day", 0),
         safety_rails=safety_rails_data,
+        quiet_hours=data.get("quiet_hours"),
         reboot=reboot_data,
         allowlist=allowlist,
         overrides=overrides,

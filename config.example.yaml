@@ -1,18 +1,15 @@
-# SCOPE NOTE — this PR (ADR-0001) implements the AC-driven core: poll loop +
-# persistence, dry_run gate, real-kick path, allowlist, quarantine,
-# per-MAC override resolution, SIGHUP reload, SIGTERM shutdown.
+# SCOPE NOTE — the daemon implements the AC-driven core plus ADR-0003 (kick
+# mechanism), ADR-0004 (rate limits), ADR-0005/0006 (reboot identification +
+# scheduling), and ADR-0007 (per-MAC backoff cooldowns + hourly/daily caps +
+# quiet hours).
 #
-# The following keys are present in this example for forward
-# compatibility with PLAN.md but are NOT yet consumed by the loader
-# and have NO runtime effect:
-#   home_assistant (HA notifier built/passed via build_daemon kwarg
+# Still NOT consumed by the loader (no runtime effect):
+#   home_assistant (the HA notifier is built/passed via the build_daemon kwarg
 #     instead of constructed from YAML),
 #   scanner.log_level / scanner.log_format,
-#   detection.ap_cu_total_min,
-#   backoff.cooldowns_seconds / backoff.max_kicks_per_hour /
-#     backoff.max_kicks_per_day,
-#   quiet_hours (entire block).
-# These are all flagged in the PR's "Out of scope" section.
+#   detection.ap_cu_total_min — the §3 AP-saturation gate is a separate
+#     follow-up ADR. Until it lands, the loader REJECTS the matching
+#     quiet_hours.override_threshold.ap_cu_total_min, so it is omitted below.
 
 controllers:
   - type: unifi
@@ -96,10 +93,12 @@ quiet_hours:
   start: "23:00"
   end: "07:00"
   timezone: America/Chicago
+  # Stricter thresholds; during quiet hours a kick requires these (per-field
+  # more-conservative-wins). ap_cu_total_min is intentionally omitted — the §3
+  # AP-saturation gate is not implemented yet and the loader rejects that key.
   override_threshold:
     tx_rate_kbps_max: 2000
     retry_pct_max: 50
-    ap_cu_total_min: 80
 
 allowlist:
   - aa:bb:cc:dd:ee:ff
