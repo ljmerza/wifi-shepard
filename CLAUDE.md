@@ -10,13 +10,11 @@ Built around a brand-agnostic `Controller` interface — UniFi first; Omada / Op
 
 ## Status & Source of Truth
 
-**Greenfield, pre-v0** — no source code yet, only the spec.
+**v1 in progress** — the core daemon is implemented and tested (scanner → scorer → actor, dry-run gate, UniFi backend, SQLite, SIGHUP/SIGTERM); a read-only UI sidecar (ADR-0002) ships alongside it. See [`docs/adr/0000-adr-index.md`](./docs/adr/0000-adr-index.md) for what's shipped vs. still open.
 
-Until v1 ships, [`PLAN.md`](./PLAN.md) is the canonical source of truth for scope, detection rules, backoff schedule, configuration shape, repo layout, and roadmap. This file captures only what is stable and useful for orienting a Claude Code session; do not duplicate `PLAN.md` here.
+For *what's built*, the code and the ADR index are the source of truth. [`PLAN.md`](./PLAN.md) remains the reference for the full v1 spec — detection rules, backoff schedule, config shape, roadmap — but where it diverges from the code, the code wins. Known open gaps are tracked in the ADRs (e.g. the per-MAC backoff schedule + quiet hours, and the concrete HA notifier / reboot executor).
 
-When code lands, prune `PLAN.md` references in this file and replace them with concrete runtime / commands / module pointers.
-
-## Stack (planned, per `PLAN.md` §5)
+## Stack (per `PLAN.md` §5)
 
 | Concern | Choice |
 |---|---|
@@ -30,39 +28,43 @@ When code lands, prune `PLAN.md` references in this file and replace them with c
 | Container base | `python:3.12-slim` |
 | Lint / format | `ruff` (managed via `uv`) |
 
-No web framework, no UI, no CLI in v1. Container starts → loops → logs → exits cleanly on SIGTERM. Health is observable via `docker ps` + log lines.
+No web framework, no UI, no CLI in the **daemon** — it starts → loops → logs → exits cleanly on SIGTERM, observable via `docker ps` + log lines. (A separate read-only web UI sidecar ships as its own image — ADR-0002.)
 
-## Repo layout (planned, per `PLAN.md` §9)
+## Repo layout
 
 ```
 projects/wifi-shepard/
-├── PLAN.md
+├── PLAN.md                       # full v1 spec (detection, backoff, roadmap, risks)
 ├── CLAUDE.md
-├── README.md                    # operating runbook (after v1)
-├── pyproject.toml               # ruff + uv-managed deps
-├── Dockerfile
-├── docker-compose.fragment.yml  # to merge into docker-compose.local.yml
+├── README.md
+├── pyproject.toml                # ruff + uv-managed deps; pytest config
+├── Dockerfile                    # daemon image (python:3.12-slim, uv)
+├── Dockerfile.ui                 # read-only UI sidecar image (ADR-0002)
+├── docker-compose.yml            # daemon + UI fragment (merge into the monorepo)
 ├── env.example
 ├── config.example.yaml
-├── docs/
-│   └── adr/                     # architecture decision records
-├── src/wifi_shepard/
-│   ├── __init__.py
-│   ├── main.py                  # entry point, signal handling, top-level loop
-│   ├── config.py                # pydantic-settings, YAML loader, env interp
-│   ├── controllers/
-│   │   ├── base.py              # Controller Protocol, ClientSnapshot model
-│   │   ├── unifi.py             # UniFiController (aiounifi)
-│   │   └── __init__.py          # backend factory keyed on YAML "type"
-│   ├── scanner.py               # poll loop
-│   ├── scorer.py                # bad-state detection, threshold resolution
-│   ├── backoff.py               # per-MAC state machine
-│   ├── actor.py                 # force_reconnect call
-│   ├── notify/
-│   │   └── ha.py
-│   ├── db.py                    # aiosqlite session, migrations
-│   └── models.py                # pydantic models
-└── tests/
+├── config.yaml
+├── docs/adr/                     # architecture decision records (index: 0000)
+├── src/
+│   ├── wifi_shepard/             # the daemon
+│   │   ├── __main__.py           # entry point (`python -m wifi_shepard`)
+│   │   ├── main.py               # Daemon: signal handling, top-level loop
+│   │   ├── config.py             # config dataclasses: YAML loader, env interp, fail-closed validation
+│   │   ├── pipeline.py           # composition root: scorer + backoff + rate-limiter + actor
+│   │   ├── scanner.py            # per-controller poll loop
+│   │   ├── scorer.py             # sliding-window bad-state detection
+│   │   ├── resolution.py         # per-MAC override > global threshold/mechanism resolution
+│   │   ├── backoff.py            # per-MAC state machine (quarantine)
+│   │   ├── rate_limit.py         # global single-flight + per-AP cap (ADR-0004)
+│   │   ├── actor.py              # kick gate: BTM→deauth fallback, dry-run, notify
+│   │   ├── pending.py            # in-flight BTM / post-kick roam-check bookkeeping
+│   │   ├── db.py                 # aiosqlite (WAL): client_samples, kick_events, reboot_events
+│   │   ├── notify/               # Notifier Protocol (concrete HA backend still open)
+│   │   ├── controllers/          # base.py Protocol, unifi.py, __init__.py factory
+│   │   └── reboot/               # ADR-0005/0006: eligibility, ha_resolver, cooldown, scheduler, rebooter
+│   └── wifi_shepard_ui/          # ADR-0002 read-only sidecar (FastAPI app, views, templates)
+├── tests/                        # pytest; AC-named (`test_*_acN.py`); `tests/ui/` for the sidecar
+└── .github/workflows/            # CI: pytest + docker build (daemon + UI), release to GHCR
 ```
 
 ## Brand-agnostic Controller
@@ -109,7 +111,7 @@ Reuse the `*default-logging` anchor from `docker-compose.base.yml` rather than r
 
 ## Common commands
 
-Once code exists, work goes through the monorepo's `dca` wrapper (all-stacks `docker compose`). From the monorepo root:
+Work goes through the monorepo's `dca` wrapper (all-stacks `docker compose`). From the monorepo root:
 
 ```bash
 dca config                          # validate the merged compose graph
@@ -135,7 +137,7 @@ ADRs live in [`docs/adr/`](./docs/adr/). The index is [`0000-adr-index.md`](./do
 - Create a new ADR: invoke `/adr <topic>` — the skill walks through options, records the decision, and appends a row to the index.
 - Implement an Accepted ADR: `/adr-to-pr docs/adr/NNNN-slug.md` — TDD-driven PR generation against the ADR's `AC-N` acceptance criteria.
 
-Decisions worth their own ADR (anticipated, not yet written): `Controller` protocol shape, kick mechanism (deauth vs 802.11v BTM vs 802.11k assist), notification channels, persistence schema, dry-run/observe-only graduation criteria, threshold-resolution semantics, Prometheus / OpenTelemetry shape, MQTT-discovery for HA entities.
+Decisions still anticipated (not yet written): notification channels beyond Home Assistant, Prometheus / OpenTelemetry metrics shape, MQTT-discovery for HA entities, and a second `Controller` backend (Omada / OpenWRT) to prove the Protocol's portability. (Already decided: `Controller` shape, kick mechanism → ADR-0003, rate limits → ADR-0004, reboot backend → ADR-0005/0006, persistence schema + threshold-resolution → ADR-0001.)
 
 ## Documentation
 
