@@ -6,12 +6,13 @@ import uuid
 from collections.abc import Callable
 from typing import Any
 
+from .backoff import evaluate_backoff
 from .controllers.base import Controller
 from .db import Store
 from .notify import Notifier
 from .pending import PendingKicks
 from .rate_limit import KickRateLimiter
-from .resolution import resolve_kick_mechanism
+from .resolution import resolve_caps, resolve_kick_mechanism
 
 logger = logging.getLogger("wifi_shepard.actor")
 
@@ -44,6 +45,7 @@ class Actor:
         backoff: Any | None = None,
         rate_limiter: KickRateLimiter | None = None,
         now_fn: Callable[[], float] = time.monotonic,
+        wall_now_fn: Callable[[], float] = time.time,
     ) -> None:
         self.config = config
         self.controller = controller
@@ -54,6 +56,10 @@ class Actor:
         # Injected for tests (ADR-0004 Fork J): simulate clock advancement
         # without monkey-patching the `time` module. Production uses the default.
         self.now_fn = now_fn
+        # Wall clock for the ADR-0007 per-MAC cooldown/caps, which compare against
+        # kick_events.ts (wall-clock time.time()). Distinct from now_fn (monotonic,
+        # for the ADR-0004 rate limiter) — the two measure different things.
+        self.wall_now_fn = wall_now_fn
         # In-flight kick bookkeeping: the BTM->deauth fallback map (ADR-0003 AC-4)
         # and the post-kick roam-check map (ADR-0003 AC-6). See pending.py.
         self.pending = PendingKicks()
@@ -137,6 +143,36 @@ class Actor:
             )
             self.pending.clear_btm(mac)
             return
+
+        # Per-MAC backoff: escalating cooldown + hourly/daily caps (ADR-0007),
+        # DB-derived from kick_events so the caps survive restart/SIGHUP. Applies to
+        # FRESH kicks only — the deauth_fallback above is the same logical kick.
+        # Skipped entirely (no DB read) when the feature is off for this MAC.
+        cooldowns = tuple(self.config.backoff.cooldowns_seconds)
+        max_hour, max_day = resolve_caps(mac, self.config)
+        if cooldowns or max_hour > 0 or max_day > 0:
+            wall_now = self.wall_now_fn()
+            lookback = max(86400.0, float(max(cooldowns)) if cooldowns else 0.0)
+            recent = await self.db.recent_kick_timestamps(mac, since=wall_now - lookback)
+            allowed, defer_reason, retry = evaluate_backoff(
+                recent,
+                wall_now,
+                cooldowns=cooldowns,
+                max_per_hour=max_hour,
+                max_per_day=max_day,
+            )
+            if not allowed:
+                logger.info(
+                    "kick_deferred",
+                    extra={
+                        "mac": mac,
+                        "ap_id": client.ap_id,
+                        "reason": defer_reason,
+                        "retry_after_seconds": retry,
+                        "stage": "per_mac_backoff",
+                    },
+                )
+                return
 
         # Fresh kick gate: global single-flight + per-AP cap (ADR-0004).
         if self.rate_limiter is not None:

@@ -40,7 +40,8 @@ class DetectionPipeline:
         # is fixed at construction); otherwise swap the config reference so the
         # accumulated per-MAC sample windows survive the reload.
         if self.scorer.config.scanner.window_samples != config.scanner.window_samples:
-            self.scorer = Scorer(config)
+            # Preserve any injected wall clock (ADR-0007 quiet hours) across the rebuild.
+            self.scorer = Scorer(config, wall_now_fn=self.scorer.wall_now_fn)
         else:
             self.scorer.config = config
         self.actor.config = config

@@ -39,6 +39,8 @@ class Store(Protocol):
         dry_run: bool,
     ) -> None: ...
 
+    async def recent_kick_timestamps(self, mac: str, *, since: float) -> list[float]: ...
+
 
 SCHEMA_CLIENT_SAMPLES = """
 CREATE TABLE IF NOT EXISTS client_samples (
@@ -174,6 +176,27 @@ class Database:
             (time.time(), mac, mode, outcome, target, 1 if dry_run else 0),
         )
         await self._conn.commit()
+
+    async def recent_kick_timestamps(self, mac: str, *, since: float) -> list[float]:
+        """Logical-kick timestamps for ``mac`` with ts >= ``since``, ascending.
+
+        The source of truth for the ADR-0007 per-MAC cooldown + hourly/daily caps:
+        deriving them from this ledger rather than in-memory counters makes the caps
+        survive a restart or SIGHUP. Counts one row per *logical* kick — dry-run rows
+        are excluded (a dry-run period must not inflate a later live decision), and so
+        are ADR-0003 ``deauth_fallback`` rows: a BTM+fallback pair is one logical kick,
+        matching ADR-0004's attempt_group granularity and the in-memory quarantine
+        counter (which only advances on the fresh path, not the fallback).
+        """
+        if self._conn is None:
+            raise RuntimeError("Database.connect() must be called before recent_kick_timestamps()")
+        cur = await self._conn.execute(
+            "SELECT ts FROM kick_events WHERE mac = ? AND ts >= ? AND dry_run = 0 "
+            "AND mechanism != 'deauth_fallback' ORDER BY ts",
+            (mac, since),
+        )
+        rows = await cur.fetchall()
+        return [float(row[0]) for row in rows]
 
     async def close(self) -> None:
         if self._conn is not None:
