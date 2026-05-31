@@ -669,6 +669,8 @@ def load_config_from_path(path: Path | str) -> Config:
         tx_rate_kbps_max=int(detection_data.get("tx_rate_kbps_max", 12000)),
         retry_pct_max=int(detection_data.get("retry_pct_max", 30)),
         signal_dbm_max=int(detection_data.get("signal_dbm_max", -70)),
+        # Raw (no int() wrapper, unlike the siblings): build_config's
+        # _require_non_negative_int fail-closes on a non-int/negative (ADR-0008 AC-6).
         ap_cu_total_min=detection_data.get("ap_cu_total_min", 0),
         radios=radios,
         quarantine_after_kicks=int(backoff_data.get("quarantine_after_kicks", 5)),
