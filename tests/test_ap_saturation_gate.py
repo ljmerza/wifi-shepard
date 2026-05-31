@@ -88,3 +88,20 @@ def test_ac6_config_parses_valid_and_rejects_invalid():
         build_config(ap_cu_total_min=-5)
     with pytest.raises(ValueError, match="ap_cu_total_min"):
         build_config(ap_cu_total_min="high")  # non-int
+
+
+def test_ac6_yaml_loader_parses_and_rejects_non_int(tmp_path):
+    # End-to-end through the YAML loader (AC-6 wording: "in YAML ... load_config
+    # raises"). Locks the raw passthrough: a non-int reaches _require_non_negative_int,
+    # so the error names ap_cu_total_min. An int() wrapper would raise a different
+    # ValueError here and fail this test.
+    from wifi_shepard.config import load_config_from_path
+
+    good = tmp_path / "good.yaml"
+    good.write_text("detection:\n  ap_cu_total_min: 75\n")
+    assert load_config_from_path(good).detection.ap_cu_total_min == 75
+
+    bad = tmp_path / "bad.yaml"
+    bad.write_text("detection:\n  ap_cu_total_min: high\n")
+    with pytest.raises(ValueError, match="ap_cu_total_min"):
+        load_config_from_path(bad)
