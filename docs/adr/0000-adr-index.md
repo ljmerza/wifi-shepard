@@ -22,3 +22,4 @@
 | [0005](./0005-device-identification-and-reboot-backend.md) | Device Identification & Reboot-Backend Selection — Delegate to Home Assistant | Implemented | 2026-05-24 |
 | [0006](./0006-reboot-remediation.md) | Reboot Remediation — Proactive Scheduling + Reactive Escalation | Partially Implemented | 2026-05-24 |
 | [0007](./0007-action-policy-backoff-and-quiet-hours.md) | Complete the Action Policy — Per-MAC Backoff Schedule, Hard Caps, and Quiet Hours | Accepted | 2026-05-30 |
+| [0008](./0008-ap-saturation-gate.md) | AP-Saturation Gate — Only Act on Saturated APs (detection.ap_cu_total_min) | Accepted | 2026-05-31 |
