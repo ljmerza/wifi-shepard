@@ -1,15 +1,17 @@
 # SCOPE NOTE — the daemon implements the AC-driven core plus ADR-0003 (kick
 # mechanism), ADR-0004 (rate limits), ADR-0005/0006 (reboot identification +
-# scheduling), and ADR-0007 (per-MAC backoff cooldowns + hourly/daily caps +
-# quiet hours).
+# scheduling), ADR-0007 (per-MAC backoff cooldowns + hourly/daily caps +
+# quiet hours), and ADR-0008 (detection.ap_cu_total_min AP-saturation gate).
 #
 # Still NOT consumed by the loader (no runtime effect):
 #   home_assistant (the HA notifier is built/passed via the build_daemon kwarg
 #     instead of constructed from YAML),
-#   scanner.log_level / scanner.log_format,
-#   detection.ap_cu_total_min — the §3 AP-saturation gate is a separate
-#     follow-up ADR. Until it lands, the loader REJECTS the matching
-#     quiet_hours.override_threshold.ap_cu_total_min, so it is omitted below.
+#   scanner.log_level / scanner.log_format.
+#
+# Still REJECTED at parse time (deferred follow-up to ADR-0008):
+#   quiet_hours.override_threshold.ap_cu_total_min — the AP-saturation gate now
+#     exists, but tightening it during quiet hours is a separate follow-up, so
+#     the loader still rejects this key. It is omitted below.
 
 controllers:
   - type: unifi
@@ -95,7 +97,8 @@ quiet_hours:
   timezone: America/Chicago
   # Stricter thresholds; during quiet hours a kick requires these (per-field
   # more-conservative-wins). ap_cu_total_min is intentionally omitted — the §3
-  # AP-saturation gate is not implemented yet and the loader rejects that key.
+  # AP-saturation gate (ADR-0008) now exists, but quiet-hours tightening of it
+  # is a deferred follow-up, so the loader still rejects this key.
   override_threshold:
     tx_rate_kbps_max: 2000
     retry_pct_max: 50
@@ -113,3 +116,4 @@ overrides:
     name: "back bedroom camera"
     max_kicks_per_day: 3
     signal_dbm_max: -65
+    ap_cu_total_min: 80  # only move it when its AP is heavily saturated (ADR-0008)
