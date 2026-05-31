@@ -15,7 +15,7 @@ from datetime import time as dt_time
 from typing import Any
 from zoneinfo import ZoneInfo
 
-_THRESHOLD_FIELDS = ("tx_rate_kbps_max", "retry_pct_max", "signal_dbm_max")
+_THRESHOLD_FIELDS = ("tx_rate_kbps_max", "retry_pct_max", "signal_dbm_max", "ap_cu_total_min")
 
 
 def resolve_thresholds(mac: str, config: Any) -> dict[str, Any]:

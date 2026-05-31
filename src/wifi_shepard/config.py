@@ -104,6 +104,9 @@ class DetectionConfig:
     tx_rate_kbps_max: int = 12000
     retry_pct_max: int = 30
     signal_dbm_max: int = -70
+    # ADR-0008: AP-saturation gate (PLAN.md §3). 0 = off (act regardless of AP
+    # channel utilization); shipped configs set 60. Per-MAC overridable.
+    ap_cu_total_min: int = 0
     radios: tuple[str, ...] = ("ng",)
 
 
@@ -155,6 +158,8 @@ class OverrideEntry:
     tx_rate_kbps_max: int | None = None
     retry_pct_max: int | None = None
     signal_dbm_max: int | None = None
+    # ADR-0008: per-MAC AP-saturation floor (override > global). None = inherit.
+    ap_cu_total_min: int | None = None
     kick_mechanism: str | None = None
     # ADR-0007: per-MAC kick-cap overrides (override > global). None = inherit.
     max_kicks_per_hour: int | None = None
@@ -517,6 +522,7 @@ def build_config(
     tx_rate_kbps_max: int = 12000,
     retry_pct_max: int = 30,
     signal_dbm_max: int = -70,
+    ap_cu_total_min: int = 0,
     radios: tuple[str, ...] = ("ng",),
     dry_run: bool = True,
     window_samples: int = 5,
@@ -542,6 +548,7 @@ def build_config(
         tx_rate_kbps_max=tx_rate_kbps_max,
         retry_pct_max=retry_pct_max,
         signal_dbm_max=signal_dbm_max,
+        ap_cu_total_min=_require_non_negative_int(ap_cu_total_min, "detection.ap_cu_total_min"),
         radios=tuple(radios),
     )
     scanner = ScannerConfig(
@@ -575,6 +582,10 @@ def build_config(
             cap_value = getattr(entry, cap_field)
             if cap_value is not None:
                 _require_non_negative_int(cap_value, f"overrides[mac={entry.mac}].{cap_field}")
+        if entry.ap_cu_total_min is not None:
+            _require_non_negative_int(
+                entry.ap_cu_total_min, f"overrides[mac={entry.mac}].ap_cu_total_min"
+            )
     controllers_typed = tuple(_build_controller_spec(c, i) for i, c in enumerate(controllers))
     safety_rails_cfg = _build_safety_rails(safety_rails)
     quiet_hours_cfg = _build_quiet_hours(quiet_hours)
@@ -658,6 +669,7 @@ def load_config_from_path(path: Path | str) -> Config:
         tx_rate_kbps_max=int(detection_data.get("tx_rate_kbps_max", 12000)),
         retry_pct_max=int(detection_data.get("retry_pct_max", 30)),
         signal_dbm_max=int(detection_data.get("signal_dbm_max", -70)),
+        ap_cu_total_min=detection_data.get("ap_cu_total_min", 0),
         radios=radios,
         quarantine_after_kicks=int(backoff_data.get("quarantine_after_kicks", 5)),
         cooldowns_seconds=_require_sequence(
