@@ -75,4 +75,9 @@ def test_ingest_flags_a_bad_device_with_resolved_thresholds():
     config = build_config(window_samples=1)
     scorer = Scorer(config)
     decision = scorer.ingest(_sample(signal=-80, tx_rate_kbps=4000, tx_retries=60))
-    assert decision == {"tx_rate_kbps_max": 12000, "retry_pct_max": 30, "signal_dbm_max": -70}
+    assert decision == {
+        "tx_rate_kbps_max": 12000,
+        "retry_pct_max": 30,
+        "signal_dbm_max": -70,
+        "ap_cu_total_min": 0,
+    }
