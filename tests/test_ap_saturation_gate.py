@@ -34,6 +34,9 @@ def _thresholds(ap_cu_total_min: int) -> dict:
 def test_ac1_gate_passes_when_saturated_blocks_when_idle():
     saturated = [make_client(ap_cu_total=70) for _ in range(3)]
     assert is_bad_state(saturated, _thresholds(60), RADIOS) is True
+    # Boundary: CU exactly at the floor passes (>= semantics) -> kills a `<=` mutant.
+    at_floor = [make_client(ap_cu_total=60) for _ in range(3)]
+    assert is_bad_state(at_floor, _thresholds(60), RADIOS) is True
     # Every other criterion trips, but the AP is below the floor -> no kick.
     idle = [make_client(ap_cu_total=50) for _ in range(3)]
     assert is_bad_state(idle, _thresholds(60), RADIOS) is False
@@ -57,6 +60,11 @@ def test_ac3_per_mac_override_beats_global():
     )
     assert resolve_thresholds(x, config)["ap_cu_total_min"] == 80
     assert resolve_thresholds(other, config)["ap_cu_total_min"] == 60
+    # The resolved floor actually drives the gate: a window at CU 70 is below X's
+    # 80 floor (spared) but above the global 60 (flagged for other MACs).
+    at_70 = [make_client(ap_cu_total=70) for _ in range(3)]
+    assert is_bad_state(at_70, resolve_thresholds(x, config), RADIOS) is False
+    assert is_bad_state(at_70, resolve_thresholds(other, config), RADIOS) is True
 
 
 def test_ac4_omitted_defaults_off_and_is_a_noop():
