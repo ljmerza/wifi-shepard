@@ -102,10 +102,6 @@ scanner:
     assert config.scanner.dry_run is False
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="env var regex is uppercase-only — see review of PR #3 issue #3",
-)
 def test_lowercase_env_var_reference_does_not_silently_pass_through(tmp_path, monkeypatch):
     from wifi_shepard.config import load_config_from_path
 

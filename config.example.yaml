@@ -2,11 +2,9 @@
 # mechanism), ADR-0004 (rate limits), ADR-0005/0006 (reboot identification +
 # scheduling), ADR-0007 (per-MAC backoff cooldowns + hourly/daily caps +
 # quiet hours), and ADR-0008 (detection.ap_cu_total_min AP-saturation gate).
-#
-# Still NOT consumed by the loader (no runtime effect):
-#   home_assistant (the HA notifier is built/passed via the build_daemon kwarg
-#     instead of constructed from YAML),
-#   scanner.log_level / scanner.log_format.
+# The home_assistant: block is consumed by the loader — when present, the
+# daemon builds the HA REST notifier from it (per-kick / per-quarantine
+# notifications); omit the block to run without notifications.
 #
 # Still REJECTED at parse time (deferred follow-up to ADR-0008):
 #   quiet_hours.override_threshold.ap_cu_total_min — the AP-saturation gate now
@@ -26,6 +24,9 @@ controllers:
     # install a real cert (or run UniFi behind a TLS-terminating reverse proxy),
     # remove this line so the secure default takes effect.
     verify_ssl: false
+    # The default port is 8443 (standalone UniFi controller). UDM-class
+    # gateways (UDM / UDM Pro / Cloud Gateway) serve the API on 443:
+    # port: 443
 
 home_assistant:
   url: http://homeassistant:8123
@@ -35,8 +36,6 @@ home_assistant:
 scanner:
   poll_interval_seconds: 60
   window_samples: 5
-  log_level: info
-  log_format: human
   dry_run: true
 
 detection:

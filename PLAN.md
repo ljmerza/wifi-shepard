@@ -87,8 +87,8 @@ Allowlist: MACs from YAML that are never kicked.
 | Async | asyncio (single event loop) |
 | Controller backends | Pluggable `Controller` Protocol; `UniFiController` first; `aiounifi` library under the hood |
 | Local state | SQLite via `aiosqlite` (WAL mode), used for kick history and backoff timers |
-| Config | YAML file mounted at `/config/config.yaml`, parsed via `pydantic-settings` with env var interpolation |
-| Logging | `structlog` (JSON or human-readable, configurable) → stdout → Docker log driver |
+| Config | YAML file mounted at `/config/config.yaml`, hand-parsed (`yaml.safe_load` + frozen dataclasses, fail-closed validation) with env var interpolation |
+| Logging | stdlib `logging` (level via `WIFI_SHEPARD_LOG_LEVEL`) → stdout → Docker log driver |
 | Notifications | HA REST `/api/services/notify/<service>` |
 | Container base | `python:3.12-slim` |
 | Process | Single python process, no supervisord, no celery, no redis |

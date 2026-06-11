@@ -1,16 +1,18 @@
 """Notification sink abstraction.
 
 Mirrors the ``Controller`` Protocol (controllers/base.py): the daemon depends on
-this surface, and concrete channels (Home Assistant REST, future MQTT, ...)
-implement it without the scorer/actor knowing which channel they talk to. A
-new channel is a new class, not an edit to the actor.
+this surface, and concrete channels (Home Assistant REST in home_assistant.py,
+future MQTT, ...) implement it without the scorer/actor knowing which channel
+they talk to. A new channel is a new class, not an edit to the actor.
 """
 
 from __future__ import annotations
 
 from typing import Protocol, runtime_checkable
 
-__all__ = ["Notifier"]
+from .home_assistant import HomeAssistantNotifier
+
+__all__ = ["HomeAssistantNotifier", "Notifier"]
 
 
 @runtime_checkable

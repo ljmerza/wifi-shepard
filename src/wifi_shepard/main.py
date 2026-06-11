@@ -10,7 +10,7 @@ from pathlib import Path
 from .config import Config, load_config_from_path
 from .controllers import Controller, build_controller
 from .db import Database
-from .notify import Notifier
+from .notify import HomeAssistantNotifier, Notifier
 from .pipeline import build_pipeline
 from .reboot.ha_resolver import HADeviceRegistry
 from .reboot.rebooter import Rebooter
@@ -42,6 +42,11 @@ class Daemon:
                 )
             controllers = [build_controller(spec) for spec in self.config.controllers]
         self.controllers = list(controllers)
+        if ha is None and self.config.home_assistant is not None:
+            # Built once at startup from the home_assistant: block; an injected
+            # kwarg (tests, alternate channels) wins. SIGHUP does not rebuild it
+            # — same Phase-1 limitation as the reboot-scheduler toggle below.
+            ha = HomeAssistantNotifier(self.config.home_assistant)
         self.ha = ha
         self.rebooter = rebooter
         self.registry = registry
@@ -122,7 +127,16 @@ class Daemon:
             first = True
             while not self._shutdown.is_set():
                 for scanner in self._scanners:
-                    await scanner.run_once()
+                    try:
+                        await scanner.run_once()
+                    except Exception:
+                        # A transient controller/network/DB failure must not kill
+                        # the long-lived daemon — log and resume next cycle,
+                        # mirroring the scheduler-tick guard in _run_scheduler.
+                        logger.exception(
+                            "scan_cycle_failed",
+                            extra={"controller": scanner.controller.name},
+                        )
                 if first:
                     self.first_cycle_started.set()
                     first = False
