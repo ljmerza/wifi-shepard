@@ -12,7 +12,7 @@ Built around a brand-agnostic `Controller` interface — UniFi first; Omada / Op
 
 **v1 in progress** — the core daemon is implemented and tested (scanner → scorer → actor, dry-run gate, UniFi backend, SQLite, SIGHUP/SIGTERM); a read-only UI sidecar (ADR-0002) ships alongside it. See [`docs/adr/0000-adr-index.md`](./docs/adr/0000-adr-index.md) for what's shipped vs. still open.
 
-For *what's built*, the code and the ADR index are the source of truth. [`PLAN.md`](./PLAN.md) remains the reference for the full v1 spec — detection rules, backoff schedule, config shape, roadmap — but where it diverges from the code, the code wins. Known open gaps are tracked in the ADRs (e.g. the per-MAC backoff schedule + quiet hours, and the concrete HA notifier / reboot executor).
+For *what's built*, the code and the ADR index are the source of truth. [`PLAN.md`](./PLAN.md) remains the reference for the full v1 spec — detection rules, backoff schedule, config shape, roadmap — but where it diverges from the code, the code wins. Known open gaps are tracked in the ADRs (e.g. the concrete HA reboot executor + device-registry client, ADR-0005/0006).
 
 ## Stack (per `PLAN.md` §5)
 
@@ -22,8 +22,8 @@ For *what's built*, the code and the ADR index are the source of truth. [`PLAN.m
 | Async | `asyncio` (single event loop, single process) |
 | Controller backends | `Controller` Protocol; `UniFiController` first via `aiounifi` |
 | Local state | SQLite via `aiosqlite` (WAL mode) at `/data/state.db` |
-| Config | YAML at `/config/config.yaml`, parsed by `pydantic-settings` with env-var interpolation |
-| Logging | `structlog` → stdout (Docker log driver picks it up) |
+| Config | YAML at `/config/config.yaml`, hand-parsed (`yaml.safe_load` + frozen dataclasses, fail-closed validation) with `${VAR}` env-var interpolation |
+| Logging | stdlib `logging` → stdout (level via `WIFI_SHEPARD_LOG_LEVEL`; Docker log driver picks it up) |
 | Notifications | Home Assistant REST `/api/services/notify/<service>` |
 | Container base | `python:3.12-slim` |
 | Lint / format | `ruff` (managed via `uv`) |
@@ -59,7 +59,7 @@ projects/wifi-shepard/
 │   │   ├── actor.py              # kick gate: BTM→deauth fallback, dry-run, notify
 │   │   ├── pending.py            # in-flight BTM / post-kick roam-check bookkeeping
 │   │   ├── db.py                 # aiosqlite (WAL): client_samples, kick_events, reboot_events
-│   │   ├── notify/               # Notifier Protocol (concrete HA backend still open)
+│   │   ├── notify/               # Notifier Protocol + HA REST backend (home_assistant.py)
 │   │   ├── controllers/          # base.py Protocol, unifi.py, __init__.py factory
 │   │   └── reboot/               # ADR-0005/0006: eligibility, ha_resolver, cooldown, scheduler, rebooter
 │   └── wifi_shepard_ui/          # ADR-0002 read-only sidecar (FastAPI app, views, templates)

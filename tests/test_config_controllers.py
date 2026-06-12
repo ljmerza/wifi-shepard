@@ -129,10 +129,6 @@ controllers:
     assert config.controllers[0].password != config.controllers[1].password
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="ControllerSpec lacks port field — see review of PR #3 issue #1",
-)
 def test_controllers_port_from_yaml_is_preserved(tmp_path):
     from wifi_shepard.config import load_config_from_path
 
@@ -152,10 +148,44 @@ controllers:
     assert config.controllers[0].port == 443
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="ControllerSpec uses default dataclass repr — see review of PR #3 issue #2",
-)
+def test_controllers_port_defaults_to_none_when_omitted(tmp_path):
+    from wifi_shepard.config import load_config_from_path
+
+    cfg = _write(
+        tmp_path,
+        """
+controllers:
+  - type: unifi
+    name: home
+    host: 192.168.1.1
+    username: shepard
+    password: secret
+""",
+    )
+    config = load_config_from_path(cfg)
+    assert config.controllers[0].port is None
+
+
+@pytest.mark.parametrize("bad_port", [0, -1, 65536, "443", True, 443.0])
+def test_controllers_port_fails_closed_on_invalid_values(tmp_path, bad_port):
+    from wifi_shepard.config import load_config_from_path
+
+    cfg = _write(
+        tmp_path,
+        f"""
+controllers:
+  - type: unifi
+    name: home
+    host: 192.168.1.1
+    username: shepard
+    password: secret
+    port: {bad_port!r}
+""",
+    )
+    with pytest.raises(ValueError, match=r"controllers\[0\]\.port"):
+        load_config_from_path(cfg)
+
+
 def test_controller_spec_repr_does_not_contain_password():
     from wifi_shepard.config import ControllerSpec
 

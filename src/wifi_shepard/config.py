@@ -17,6 +17,12 @@ from wifi_shepard.reboot.oui import looks_like_espressif
 logger = logging.getLogger("wifi_shepard.config")
 
 _ENV_VAR_PATTERN = re.compile(r"\$\{([A-Z_][A-Z0-9_]*)\}")
+_ENV_VAR_NAME = re.compile(r"[A-Z_][A-Z0-9_]*")
+# Any ${...} reference, valid-form or not. Scanned *before* substitution so a
+# lowercase or typo'd reference fails closed instead of passing through as the
+# literal string (PR #3 issue #3); scanning the input also avoids false
+# positives when an env var's substituted value itself contains "${".
+_ENV_REF_PATTERN = re.compile(r"\$\{([^}]*)\}")
 
 # ADR-0003 §Decision: kick_mechanism is a closed set. Anything else fails closed
 # at config parse time so a typo (`kick_mechanism: dauth`) doesn't silently
@@ -59,6 +65,14 @@ def _require_bool(value: Any, key: str) -> bool:
 
 
 def _interpolate_env(text: str) -> str:
+    for match in _ENV_REF_PATTERN.finditer(text):
+        name = match.group(1)
+        if _ENV_VAR_NAME.fullmatch(name) is None:
+            raise ValueError(
+                f"env reference ${{{name}}} in config is not an uppercase env var name "
+                f"(expected ${{LIKE_THIS}}); refusing to pass it through literally"
+            )
+
     def repl(match: re.Match[str]) -> str:
         name = match.group(1)
         if name not in os.environ:
@@ -231,9 +245,23 @@ class ControllerSpec:
     name: str
     host: str
     username: str
-    password: str
+    # repr-suppressed so a logged/raised spec can't leak the secret (PR #3 issue #2).
+    password: str = field(repr=False)
     site: str = "default"
     verify_ssl: bool = True
+    # None = backend default (UniFi standalone: 8443). UDM-class gateways serve
+    # the API on 443 (PR #3 issue #1).
+    port: int | None = None
+
+
+@dataclass(frozen=True)
+class HomeAssistantConfig:
+    # PLAN.md §1/§4: per-kick / per-quarantine notifications via HA's REST
+    # notify service. token is repr-suppressed for the same reason as
+    # ControllerSpec.password.
+    url: str
+    token: str = field(repr=False)
+    notify_service: str
 
 
 @dataclass(frozen=True)
@@ -247,6 +275,7 @@ class Config:
     overrides: tuple[OverrideEntry, ...] = ()
     allowlist: tuple[str, ...] = ()
     controllers: tuple[ControllerSpec, ...] = ()
+    home_assistant: HomeAssistantConfig | None = None
 
 
 _CONTROLLER_REQUIRED = ("type", "name", "host", "username", "password")
@@ -256,6 +285,13 @@ def _build_controller_spec(item: Mapping[str, Any], index: int) -> ControllerSpe
     for key in _CONTROLLER_REQUIRED:
         if key not in item or item[key] in (None, ""):
             raise ValueError(f"controllers[{index}].{key} is required")
+    port = item.get("port")
+    if port is not None:
+        # Reject bool explicitly: YAML yes/no parses to bool, an int subclass.
+        if isinstance(port, bool) or not isinstance(port, int):
+            raise ValueError(f"controllers[{index}].port must be an integer; got {port!r}")
+        if not 1 <= port <= 65535:
+            raise ValueError(f"controllers[{index}].port must be in 1..65535; got {port!r}")
     return ControllerSpec(
         type=str(item["type"]),
         name=str(item["name"]),
@@ -264,6 +300,34 @@ def _build_controller_spec(item: Mapping[str, Any], index: int) -> ControllerSpe
         password=str(item["password"]),
         site=str(item.get("site", "default")),
         verify_ssl=bool(item.get("verify_ssl", True)),
+        port=port,
+    )
+
+
+def _build_home_assistant(raw: Mapping[str, Any] | None) -> HomeAssistantConfig | None:
+    """Parse + validate the home_assistant: block. None (no block) → notifications off.
+
+    Fail-closed when the block is present: all three keys are required and
+    non-empty so a missing ${HA_TOKEN} can't silently ship a notifier that
+    401s on every kick.
+    """
+    if raw is None:
+        return None
+    if not isinstance(raw, Mapping):
+        raise ValueError(
+            f"home_assistant must be a YAML mapping, got {type(raw).__name__}: {raw!r}"
+        )
+    for key in ("url", "token", "notify_service"):
+        value = raw.get(key)
+        if not isinstance(value, str) or not value:
+            raise ValueError(f"home_assistant.{key} is required and must be a non-empty string")
+    url = raw["url"]
+    if not url.startswith(("http://", "https://")):
+        raise ValueError(f"home_assistant.url must start with http:// or https://; got {url!r}")
+    return HomeAssistantConfig(
+        url=url,
+        token=raw["token"],
+        notify_service=raw["notify_service"],
     )
 
 
@@ -538,6 +602,7 @@ def build_config(
     overrides: list[dict[str, Any]] | tuple[dict[str, Any], ...] = (),
     allowlist: list[str] | tuple[str, ...] = (),
     controllers: list[dict[str, Any]] | tuple[dict[str, Any], ...] = (),
+    home_assistant: Mapping[str, Any] | None = None,
 ) -> Config:
     if kick_mechanism not in _VALID_KICK_MECHANISMS:
         raise ValueError(
@@ -587,6 +652,7 @@ def build_config(
                 entry.ap_cu_total_min, f"overrides[mac={entry.mac}].ap_cu_total_min"
             )
     controllers_typed = tuple(_build_controller_spec(c, i) for i, c in enumerate(controllers))
+    home_assistant_cfg = _build_home_assistant(home_assistant)
     safety_rails_cfg = _build_safety_rails(safety_rails)
     quiet_hours_cfg = _build_quiet_hours(quiet_hours)
     reboot_cfg = _build_reboot(reboot)
@@ -621,6 +687,7 @@ def build_config(
         overrides=overrides_typed,
         allowlist=tuple(allowlist),
         controllers=controllers_typed,
+        home_assistant=home_assistant_cfg,
     )
 
 
@@ -685,4 +752,5 @@ def load_config_from_path(path: Path | str) -> Config:
         allowlist=allowlist,
         overrides=overrides,
         controllers=controllers,
+        home_assistant=data.get("home_assistant"),
     )

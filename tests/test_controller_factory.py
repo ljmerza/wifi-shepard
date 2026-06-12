@@ -34,6 +34,20 @@ def test_factory_builds_unifi_controller_with_forwarded_kwargs():
     assert controller.name == "home"
 
 
+def test_factory_forwards_port_when_set():
+    from wifi_shepard.controllers import build_controller
+
+    controller = build_controller(_spec(port=443))
+    assert controller.port == 443
+
+
+def test_factory_uses_backend_default_port_when_unset():
+    from wifi_shepard.controllers import build_controller
+
+    controller = build_controller(_spec())
+    assert controller.port == 8443
+
+
 def test_factory_rejects_unknown_type_with_value_error():
     from wifi_shepard.controllers import build_controller
 
