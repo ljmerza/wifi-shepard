@@ -39,6 +39,9 @@ scanner:
   dry_run: true
 
 detection:
+  # ADR-0009: set any of the three client criteria to `null` to disable it
+  # (omitting a key keeps its default). e.g. tx_rate_kbps_max: null +
+  # retry_pct_max: null = "signal + saturation only". At least one must stay set.
   tx_rate_kbps_max: 12000
   retry_pct_max: 30
   signal_dbm_max: -70

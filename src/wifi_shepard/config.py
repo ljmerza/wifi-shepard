@@ -56,6 +56,20 @@ def _require_non_negative_int(value: Any, key: str) -> int:
     return value
 
 
+def _optional_int_field(data: Mapping[str, Any], key: str, default: int) -> int | None:
+    """ADR-0009 disable-able detection criterion. Absent key -> ``default`` (criterion
+    active); explicit YAML ``null`` -> ``None`` (criterion disabled); otherwise coerce
+    to ``int`` (rejecting bool, which YAML parses from yes/no as an int subclass)."""
+    if key not in data:
+        return default
+    value = data[key]
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"detection.{key} must be an integer or null; got {value!r}")
+    return value
+
+
 def _require_bool(value: Any, key: str) -> bool:
     # Fail closed on a non-bool toggle: `enabled: "no"` (a quoted string) would
     # otherwise coerce truthy and silently arm a guard the operator meant to disable.
@@ -115,9 +129,12 @@ def _require_mapping_items(items: list[Any], key: str) -> list[Mapping[str, Any]
 
 @dataclass(frozen=True)
 class DetectionConfig:
-    tx_rate_kbps_max: int = 12000
-    retry_pct_max: int = 30
-    signal_dbm_max: int = -70
+    # ADR-0009: each client criterion is disable-able. `None` (YAML `null`) turns
+    # that signal off; omitting the key keeps the active default. At least one of
+    # the three must stay enabled (validated in build_config).
+    tx_rate_kbps_max: int | None = 12000
+    retry_pct_max: int | None = 30
+    signal_dbm_max: int | None = -70
     # ADR-0008: AP-saturation gate (PLAN.md §3). 0 = off (act regardless of AP
     # channel utilization); shipped configs set 60. Per-MAC overridable.
     ap_cu_total_min: int = 0
@@ -583,9 +600,9 @@ def _build_quiet_hours(raw: Mapping[str, Any] | None) -> QuietHoursConfig | None
 
 def build_config(
     *,
-    tx_rate_kbps_max: int = 12000,
-    retry_pct_max: int = 30,
-    signal_dbm_max: int = -70,
+    tx_rate_kbps_max: int | None = 12000,
+    retry_pct_max: int | None = 30,
+    signal_dbm_max: int | None = -70,
     ap_cu_total_min: int = 0,
     radios: tuple[str, ...] = ("ng",),
     dry_run: bool = True,
@@ -616,6 +633,18 @@ def build_config(
         ap_cu_total_min=_require_non_negative_int(ap_cu_total_min, "detection.ap_cu_total_min"),
         radios=tuple(radios),
     )
+    # ADR-0009: at least one client criterion must stay enabled — an all-null trio
+    # would make every saturated client "bad" (the scorer fails safe, but reject it
+    # here so the misconfig surfaces loudly rather than silently never/always acting).
+    if (
+        detection.tx_rate_kbps_max is None
+        and detection.retry_pct_max is None
+        and detection.signal_dbm_max is None
+    ):
+        raise ValueError(
+            "detection must enable at least one client criterion; tx_rate_kbps_max, "
+            "retry_pct_max, and signal_dbm_max are all null"
+        )
     scanner = ScannerConfig(
         poll_interval_seconds=poll_interval_seconds,
         window_samples=window_samples,
@@ -733,9 +762,9 @@ def load_config_from_path(path: Path | str) -> Config:
         window_samples=int(scanner_data.get("window_samples", 5)),
         dry_run=dry_run,
         kick_mechanism=str(scanner_data.get("kick_mechanism", "deauth")),
-        tx_rate_kbps_max=int(detection_data.get("tx_rate_kbps_max", 12000)),
-        retry_pct_max=int(detection_data.get("retry_pct_max", 30)),
-        signal_dbm_max=int(detection_data.get("signal_dbm_max", -70)),
+        tx_rate_kbps_max=_optional_int_field(detection_data, "tx_rate_kbps_max", 12000),
+        retry_pct_max=_optional_int_field(detection_data, "retry_pct_max", 30),
+        signal_dbm_max=_optional_int_field(detection_data, "signal_dbm_max", -70),
         # Raw (no int() wrapper, unlike the siblings): build_config's
         # _require_non_negative_int fail-closes on a non-int/negative (ADR-0008 AC-6).
         ap_cu_total_min=detection_data.get("ap_cu_total_min", 0),
