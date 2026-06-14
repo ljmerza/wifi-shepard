@@ -23,3 +23,4 @@
 | [0006](./0006-reboot-remediation.md) | Reboot Remediation — Proactive Scheduling + Reactive Escalation | Partially Implemented | 2026-05-24 |
 | [0007](./0007-action-policy-backoff-and-quiet-hours.md) | Complete the Action Policy — Per-MAC Backoff Schedule, Hard Caps, and Quiet Hours | Accepted | 2026-05-30 |
 | [0008](./0008-ap-saturation-gate.md) | AP-Saturation Gate — Only Act on Saturated APs (detection.ap_cu_total_min) | Accepted | 2026-05-31 |
+| [0009](./0009-disable-able-detection-criteria.md) | Disable-able Detection Criteria — `null` Turns a Client Signal Off | Implemented | 2026-06-14 |

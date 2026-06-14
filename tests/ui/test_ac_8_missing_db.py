@@ -33,9 +33,9 @@ def test_ac_8_missing_db_renders_empty_state(tmp_path: Path) -> None:
         "empty-state page must render the .empty paragraph, not a fallback"
     )
     # And the human-readable copy that explains what's missing.
-    assert any(marker in lower for marker in ["no ap saturation", "no clients", "no data"]), (
-        "empty-state copy must explain why no data is shown"
-    )
+    assert any(
+        marker in lower for marker in ["no ap data", "no ap saturation", "no clients", "no data"]
+    ), "empty-state copy must explain why no data is shown"
 
 
 def test_ac_8_missing_tables_renders_empty_state(tmp_path: Path) -> None:

@@ -11,6 +11,17 @@ from .resolution import apply_quiet_hours, quiet_hours_active, resolve_threshold
 def is_bad_state(samples: list[Any], thresholds: dict[str, Any], radios: tuple[str, ...]) -> bool:
     if not samples:
         return False
+    # ADR-0009: each client criterion is disable-able — a `None` threshold means
+    # "don't test this signal". Read once; a None value skips that condition below.
+    signal_max = thresholds.get("signal_dbm_max")
+    tx_rate_max = thresholds.get("tx_rate_kbps_max")
+    retry_max = thresholds.get("retry_pct_max")
+    # Fail safe: with no active client criterion, "bad" would be vacuously true for
+    # every client on a saturated AP — never act on radio + saturation alone.
+    # load_config already rejects an all-null trio (config.py); this guards direct
+    # callers (tests, embedders) too.
+    if signal_max is None and tx_rate_max is None and retry_max is None:
+        return False
     for sample in samples:
         if sample.radio not in radios:
             return False
@@ -20,16 +31,17 @@ def is_bad_state(samples: list[Any], thresholds: dict[str, Any], radios: tuple[s
         # when CU is unavailable, so unknown CU fails closed (0 < any positive floor).
         if (sample.ap_cu_total or 0) < thresholds.get("ap_cu_total_min", 0):
             return False
-        if sample.signal >= thresholds["signal_dbm_max"]:
+        if signal_max is not None and sample.signal >= signal_max:
             return False
-        if sample.tx_rate_kbps >= thresholds["tx_rate_kbps_max"]:
+        if tx_rate_max is not None and sample.tx_rate_kbps >= tx_rate_max:
             return False
-        attempts = sample.wifi_tx_attempts or 0
-        if attempts <= 0:
-            return False
-        retry_pct = (sample.tx_retries * 100.0) / attempts
-        if retry_pct <= thresholds["retry_pct_max"]:
-            return False
+        if retry_max is not None:
+            attempts = sample.wifi_tx_attempts or 0
+            if attempts <= 0:
+                return False
+            retry_pct = (sample.tx_retries * 100.0) / attempts
+            if retry_pct <= retry_max:
+                return False
     return True
 
 

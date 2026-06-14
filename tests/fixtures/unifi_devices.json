@@ -7,9 +7,10 @@
       "type": "uap",
       "name": "Front Porch",
       "model": "U6-Lite",
+      "system-stats": {"cpu": "6.4", "mem": "42.1", "uptime": "123456"},
       "radio_table_stats": [
-        {"radio": "ng", "cu_total": 72, "bssid": "ff:ee:dd:cc:bb:01"},
-        {"radio": "na", "cu_total": 35, "bssid": "ff:ee:dd:cc:bb:02"}
+        {"radio": "ng", "cu_total": 72, "bssid": "ff:ee:dd:cc:bb:01", "channel": 6},
+        {"radio": "na", "cu_total": 35, "bssid": "ff:ee:dd:cc:bb:02", "channel": 36}
       ]
     },
     {

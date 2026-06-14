@@ -1,5 +1,8 @@
 {% extends "base.html" %}
 {% block title %}Overview — wifi-shepard{% endblock %}
+{% block head_extra %}
+{% if refresh_seconds and refresh_seconds > 0 %}<meta http-equiv="refresh" content="{{ refresh_seconds }}">{% endif %}
+{% endblock %}
 {% block body %}
 <h1>Overview</h1>
 
@@ -22,17 +25,37 @@
   </span>
 </div>
 
-<h2>Top noisy APs (channel utilization)</h2>
+<h2>Top noisy APs</h2>
 {% if stats.noisy_aps %}
 <table>
-  <thead><tr><th>AP</th><th>cu_total %</th></tr></thead>
+  <thead>
+    <tr>
+      <th>AP name</th>
+      <th>AP MAC</th>
+      <th>CPU</th>
+      <th>Memory</th>
+      <th>Channels (utilization)</th>
+    </tr>
+  </thead>
   <tbody>
-    {% for ap_id, cu in stats.noisy_aps %}
-    <tr><td>{{ ap_id }}</td><td>{{ cu }}</td></tr>
+    {% for ap in stats.noisy_aps %}
+    <tr>
+      <td>{{ ap.name or "—" }}</td>
+      <td>{{ ap.mac or "—" }}</td>
+      <td>{% if ap.cpu_pct is not none %}{{ "%.0f"|format(ap.cpu_pct) }}%{% else %}—{% endif %}</td>
+      <td>{% if ap.mem_pct is not none %}{{ "%.0f"|format(ap.mem_pct) }}%{% else %}—{% endif %}</td>
+      <td>
+        {%- if ap.radios -%}
+          {%- for r in ap.radios -%}
+            {{ r.radio | radio_band }} ch{{ r.channel }}: {{ r.cu_total }}%{% if not loop.last %} · {% endif %}
+          {%- endfor -%}
+        {%- else -%}—{%- endif -%}
+      </td>
+    </tr>
     {% endfor %}
   </tbody>
 </table>
 {% else %}
-<p class="empty">No AP saturation data yet — daemon has not recorded any client samples.</p>
+<p class="empty">No AP data yet — daemon has not recorded any AP samples.</p>
 {% endif %}
 {% endblock %}

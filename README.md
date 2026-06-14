@@ -26,7 +26,7 @@ Edit:
 
 - `config.yaml` — controller credentials, allowlist, detection thresholds. Keep `scanner.dry_run: true` until you have watched the logs for a poll cycle or two.
 - `wifi-shepard.env` — `UNIFI_PASSWORD` (required), `HA_TOKEN` (optional).
-- `wifi-shepard-ui.env` — `WIFI_SHEPARD_UI_TOKEN` (bearer token; unset to disable auth).
+- `wifi-shepard-ui.env` — `WIFI_SHEPARD_UI_TOKEN` (bearer token; unset to disable auth), `WIFI_SHEPARD_UI_REFRESH_SECONDS` (overview auto-refresh interval, default 60s; 0 disables).
 
 ### 2. Pull or build the images
 
@@ -71,6 +71,8 @@ The daemon writes its SQLite state to `/data/state.db` (mount as a volume).
 The UI sidecar mounts the same volume read-only and serves on port 8080.
 
 ## Local development
+
+Requires [`uv`](https://docs.astral.sh/uv/getting-started/installation/) (the Python package manager).
 
 ```bash
 uv sync --frozen --group dev

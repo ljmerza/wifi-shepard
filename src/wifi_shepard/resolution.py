@@ -85,11 +85,14 @@ def apply_quiet_hours(thresholds: dict[str, Any], quiet_hours: Any) -> dict[str,
     higher, signal_dbm_max lower (more negative). Quiet hours never *loosens* a value;
     fields the operator left unset in override_threshold keep their resolved value.
     """
+    # ADR-0009: a disabled (None) criterion stays disabled — quiet hours only
+    # tightens criteria that are active, and never re-enables one (also avoids a
+    # min()/max() TypeError against None).
     out = dict(thresholds)
-    if quiet_hours.tx_rate_kbps_max is not None:
+    if quiet_hours.tx_rate_kbps_max is not None and out.get("tx_rate_kbps_max") is not None:
         out["tx_rate_kbps_max"] = min(out["tx_rate_kbps_max"], quiet_hours.tx_rate_kbps_max)
-    if quiet_hours.retry_pct_max is not None:
+    if quiet_hours.retry_pct_max is not None and out.get("retry_pct_max") is not None:
         out["retry_pct_max"] = max(out["retry_pct_max"], quiet_hours.retry_pct_max)
-    if quiet_hours.signal_dbm_max is not None:
+    if quiet_hours.signal_dbm_max is not None and out.get("signal_dbm_max") is not None:
         out["signal_dbm_max"] = min(out["signal_dbm_max"], quiet_hours.signal_dbm_max)
     return out

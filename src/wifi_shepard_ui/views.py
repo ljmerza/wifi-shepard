@@ -60,6 +60,7 @@ class DeviceRow:
     last_event_ts: float | None  # newest of (last kick, last sample)
     state: str
     allowlisted: bool
+    name: str | None = None  # latest controller-reported name/hostname, if any
 
 
 @dataclass(frozen=True)
@@ -72,12 +73,28 @@ class HistoryEvent:
 
 
 @dataclass(frozen=True)
+class RadioUtil:
+    radio: str  # backend radio id: "ng" (2.4), "na" (5), "6e"/"ax" (6)
+    channel: int
+    cu_total: int
+
+
+@dataclass(frozen=True)
+class NoisyAP:
+    name: str | None
+    mac: str
+    cpu_pct: float | None
+    mem_pct: float | None
+    radios: list[RadioUtil]  # noisiest radio first
+
+
+@dataclass(frozen=True)
 class OverviewStats:
     total_clients: int
     quarantined: int
     kicks_today: int
     kicks_this_week: int
-    noisy_aps: list[tuple[str, int]]  # (ap_id, latest_cu_total), top 5
+    noisy_aps: list[NoisyAP]  # top 5 APs by peak per-radio channel utilization
 
 
 def derive_state(*, kick_count: int, last_kick_ts: float | None, now: float) -> str:
@@ -130,6 +147,19 @@ def list_devices(
     for mac, last_sample_ts in conn.execute("SELECT mac, MAX(ts) FROM client_samples GROUP BY mac"):
         samples[mac] = last_sample_ts
 
+    # Latest controller-reported name per MAC. Cosmetic, so degrade silently if
+    # the daemon hasn't run the `name`-column migration yet (partial deploy):
+    # an absent column shows the MAC as before rather than 500-ing the page.
+    names: dict[str, str | None] = {}
+    try:
+        for mac, name in conn.execute(
+            "SELECT mac, name FROM client_samples "
+            "WHERE id IN (SELECT MAX(id) FROM client_samples GROUP BY mac)"
+        ):
+            names[mac] = name
+    except sqlite3.OperationalError:
+        names = {}
+
     allowlist_norm = {m.lower() for m in allowlist}
     rows: list[DeviceRow] = []
     for mac in sorted(set(kicks) | set(samples)):
@@ -147,6 +177,7 @@ def list_devices(
                 last_event_ts=last_event_ts,
                 state=derive_state(kick_count=n_kicks, last_kick_ts=last_kick_ts, now=now),
                 allowlisted=mac.lower() in allowlist_norm,
+                name=names.get(mac),
             )
         )
     return rows
@@ -161,6 +192,7 @@ def sort_devices(rows: list[DeviceRow], key: str) -> list[DeviceRow]:
     """
     sorters = {
         "mac": (lambda r: r.mac, False),
+        "name": (lambda r: (r.name or "").lower(), False),
         "kicks": (lambda r: r.kick_count, True),
         "last_bad": (lambda r: r.last_kick_ts or 0, True),
         "state": (lambda r: r.state, False),
@@ -231,6 +263,42 @@ def device_history(
     return events
 
 
+def _noisy_aps(conn: sqlite3.Connection, *, limit: int = 5) -> list[NoisyAP]:
+    """Top APs by peak per-radio channel utilization, from the latest poll.
+
+    Reads the newest ap_samples row per AP and the newest ap_radio_samples row
+    per (AP, radio). Returns an empty list — rather than raising — when the AP
+    tables don't exist yet (daemon not upgraded), so the overview tiles still
+    render. Radios within each AP are ordered noisiest-first.
+    """
+    try:
+        ap_rows = conn.execute(
+            "SELECT ap_id, name, mac, cpu_pct, mem_pct FROM ap_samples "
+            "WHERE id IN (SELECT MAX(id) FROM ap_samples GROUP BY ap_id)"
+        ).fetchall()
+
+        radios_by_ap: dict[str, list[RadioUtil]] = {}
+        for ap_id, radio, channel, cu in conn.execute(
+            "SELECT ap_id, radio, channel, cu_total FROM ap_radio_samples "
+            "WHERE id IN (SELECT MAX(id) FROM ap_radio_samples GROUP BY ap_id, radio)"
+        ):
+            radios_by_ap.setdefault(ap_id, []).append(
+                RadioUtil(radio=radio, channel=channel or 0, cu_total=cu or 0)
+            )
+    except sqlite3.OperationalError:
+        return []
+
+    ranked: list[tuple[int, NoisyAP]] = []
+    for ap_id, name, mac, cpu_pct, mem_pct in ap_rows:
+        radios = sorted(radios_by_ap.get(ap_id, []), key=lambda r: r.cu_total, reverse=True)
+        peak = radios[0].cu_total if radios else 0
+        ranked.append(
+            (peak, NoisyAP(name=name, mac=mac, cpu_pct=cpu_pct, mem_pct=mem_pct, radios=radios))
+        )
+    ranked.sort(key=lambda t: t[0], reverse=True)
+    return [ap for _peak, ap in ranked[:limit]]
+
+
 def overview(conn: sqlite3.Connection, *, now: float) -> OverviewStats:
     """Snapshot for the GET / page."""
     day_ago = now - 86400
@@ -254,21 +322,7 @@ def overview(conn: sqlite3.Connection, *, now: float) -> OverviewStats:
         if derive_state(kick_count=n_kicks, last_kick_ts=last_kick_ts, now=now) == "QUARANTINE":
             quarantined += 1
 
-    # Filter NULL ap_id INSIDE the GROUP BY subquery — otherwise NULL becomes
-    # its own group, takes a slot in the LIMIT 5, and is dropped after the
-    # fact, causing fewer than 5 real APs to surface even when 5 were
-    # available.
-    noisy_aps: list[tuple[str, int]] = []
-    for ap_id, cu in conn.execute(
-        "SELECT ap_id, ap_cu_total FROM client_samples "
-        "WHERE id IN ("
-        "  SELECT MAX(id) FROM client_samples "
-        "  WHERE ap_id IS NOT NULL AND ap_cu_total IS NOT NULL "
-        "  GROUP BY ap_id"
-        ") "
-        "ORDER BY ap_cu_total DESC LIMIT 5"
-    ):
-        noisy_aps.append((ap_id, cu))
+    noisy_aps = _noisy_aps(conn)
 
     return OverviewStats(
         total_clients=total_clients,

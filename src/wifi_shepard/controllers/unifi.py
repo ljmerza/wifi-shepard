@@ -9,7 +9,7 @@ import aiounifi
 from aiounifi.models.api import ApiRequest
 from aiounifi.models.configuration import Configuration
 
-from .base import APSnapshot, ClientSnapshot, RadioStats
+from .base import APSnapshot, APStats, ClientSnapshot, RadioStats
 
 
 @dataclass
@@ -37,6 +37,25 @@ class UniFiSchemaError(RuntimeError):
     Fail-closed posture per ADR-0001 §Risks: rather than silently coercing or zero-filling,
     we surface schema drift so it can be diagnosed against a recorded fixture.
     """
+
+
+def _parse_pct(value: Any) -> float | None:
+    """Coerce a UniFi system-stats percentage to a float, fail-soft.
+
+    UniFi reports ``system-stats`` cpu/mem as strings (e.g. ``"5.2"`` — and
+    possibly ``"5.2%"``; the exact format isn't guaranteed across firmware).
+    Strip a trailing ``%`` and whitespace; return ``None`` for missing/blank/
+    unparseable values so the UI shows "—" rather than a bogus 0.
+    """
+    if value is None:
+        return None
+    text = str(value).strip().rstrip("%").strip()
+    if not text:
+        return None
+    try:
+        return float(text)
+    except ValueError:
+        return None
 
 
 def _require(raw: dict[str, Any], key: str, expected_type: type, *, owner: str) -> Any:
@@ -127,6 +146,9 @@ class UniFiController:
             ap_mac = _require(raw, "ap_mac", str, owner="client")
             radio = _require(raw, "radio", str, owner="client")
             cu_total = cu_lookup.get((ap_mac, radio), 0)
+            # Friendly label for the UI: operator-assigned `name` first, then the
+            # device-reported `hostname`; None when neither is present.
+            name = raw.get("name") or raw.get("hostname") or None
             out.append(
                 ClientSnapshot(
                     mac=mac,
@@ -137,6 +159,7 @@ class UniFiController:
                     radio=radio,
                     ap_id=ap_mac,
                     ap_cu_total=cu_total,
+                    name=name,
                 )
             )
         return out
@@ -172,10 +195,42 @@ class UniFiController:
                     radio=_require(entry, "radio", str, owner="radio_table_stats"),
                     cu_total=_require(entry, "cu_total", int, owner="radio_table_stats"),
                     bssid=entry.get("bssid", ""),
+                    channel=entry.get("channel", 0),
                 )
                 for entry in stats
             ]
         return []
+
+    async def list_ap_stats(self) -> list[APStats]:
+        unifi = self._controller()
+        await unifi.devices.update()
+        out: list[APStats] = []
+        for device in unifi.devices.values():
+            raw = device.raw
+            if raw.get("type") != "uap":
+                continue
+            mac = _require(raw, "mac", str, owner="device")
+            system_stats = raw.get("system-stats") or {}
+            radios = tuple(
+                RadioStats(
+                    radio=_require(entry, "radio", str, owner="radio_table_stats"),
+                    cu_total=_require(entry, "cu_total", int, owner="radio_table_stats"),
+                    bssid=entry.get("bssid", ""),
+                    channel=entry.get("channel", 0),
+                )
+                for entry in raw.get("radio_table_stats") or []
+            )
+            out.append(
+                APStats(
+                    id=mac,
+                    name=raw.get("name", ""),
+                    mac=mac,
+                    cpu_pct=_parse_pct(system_stats.get("cpu")),
+                    mem_pct=_parse_pct(system_stats.get("mem")),
+                    radios=radios,
+                )
+            )
+        return out
 
     async def force_reconnect_client(self, mac: str) -> None:
         unifi = self._controller()

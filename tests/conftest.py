@@ -13,6 +13,7 @@ class FakeController:
     name: str = "fake"
     clients: list[Any] = field(default_factory=list)
     aps: list[Any] = field(default_factory=list)
+    ap_stats: list[Any] = field(default_factory=list)
     radio_stats: dict[str, list[Any]] = field(default_factory=dict)
     force_reconnect_calls: list[str] = field(default_factory=list)
     btm_calls: list[tuple[str, str | None]] = field(default_factory=list)
@@ -23,6 +24,9 @@ class FakeController:
 
     async def list_aps(self) -> list[Any]:
         return list(self.aps)
+
+    async def list_ap_stats(self) -> list[Any]:
+        return list(self.ap_stats)
 
     async def get_ap_radio_stats(self, ap_id: str) -> list[Any]:
         return list(self.radio_stats.get(ap_id, []))
@@ -102,6 +106,7 @@ def make_client(
     radio: str = "ng",
     ap_id: str = "ap1",
     ap_cu_total: int = 70,
+    name: str | None = None,
 ) -> SimpleNamespace:
     return SimpleNamespace(
         mac=mac,
@@ -112,6 +117,7 @@ def make_client(
         radio=radio,
         ap_id=ap_id,
         ap_cu_total=ap_cu_total,
+        name=name,
     )
 
 

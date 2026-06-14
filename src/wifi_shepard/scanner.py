@@ -81,3 +81,8 @@ class Scanner:
             decision = pipeline.scorer.ingest(client)
             if decision is not None:
                 await pipeline.actor.handle(client, decision)
+
+        # Persist AP-level health (identity + CPU/mem + per-radio CU) for the
+        # read-only UI's "noisy APs" view. Display-only — never feeds detection.
+        for ap in await self.controller.list_ap_stats():
+            await self.db.insert_ap_stats(ap)

@@ -1,5 +1,6 @@
 """AC-4: GET / overview shows total tracked clients, currently-quarantined
-count, kicks-today, kicks-this-week, and top 5 noisy APs by cu_total."""
+count, kicks-today, kicks-this-week, and a top-5 noisy-APs table (AP name, MAC,
+CPU, memory, per-channel utilization) sourced from the ap_samples tables."""
 
 from __future__ import annotations
 
@@ -34,7 +35,7 @@ def test_ac_4_overview_renders_required_counts(seeded_db: Path) -> None:
     # the counts rather than templating constants.
     # Seeded fixture: 2 distinct MACs in client_samples; 0 quarantined;
     # 1 real kick (kicks_today should be 1, dry-run excluded);
-    # ap1 cu=70, ap2 cu=30 in noisy AP list.
+    # ap_samples: "Front Porch" (peak cu 72) and "Garage" (peak cu 40).
     tile_values = re.findall(r'<div class="value">(\d+)</div>', text)
     assert len(tile_values) == 4, (
         f"expected 4 stat tiles (tracked/quarantine/today/week); got {tile_values}"
@@ -45,38 +46,41 @@ def test_ac_4_overview_renders_required_counts(seeded_db: Path) -> None:
     assert today == "1", f"kicks today must be 1 (dry-run excluded), got {today}"
     assert week == "1", f"kicks this week must be 1, got {week}"
 
-    # Noisy AP row exists for ap1 with its seeded cu_total of 70.
-    assert "ap1" in lower, "noisy AP table must include ap1"
-    assert ">70<" in text, "ap1's seeded cu_total of 70 must render"
+    # Noisy AP table surfaces the seeded AP's name, MAC, CPU/mem load and a
+    # per-channel utilization breakdown.
+    assert "front porch" in lower, "noisy AP table must show the AP name"
+    assert "ff:ee:dd:cc:bb:aa" in lower, "noisy AP table must show the AP MAC"
+    assert "6%" in text, "Front Porch's CPU load (6%) must render"
+    assert "42%" in text, "Front Porch's memory load (42%) must render"
+    assert "ch6: 72%" in text, "per-channel utilization (2.4GHz ch6 at 72%) must render"
+
+    # Ordering: ap1 (peak cu 72) must come before ap2 (peak cu 40).
+    assert lower.find("front porch") < lower.find("garage"), (
+        "noisy APs must be ordered by peak channel utilization, noisiest first"
+    )
 
 
-def test_ac_4_overview_null_ap_id_does_not_displace_real_aps(
+def test_ac_4_overview_top_5_aps_by_peak_cu(
     make_db: Callable[..., Path],
 ) -> None:
-    """Regression for review #1: a client_samples row with ap_id=NULL must not
-    consume a slot in the noisy_aps top-5. Seed 6 real APs + 1 NULL row; the
-    page must surface 5 real APs (the lowest cu drops out, NULL never appears).
+    """The noisy-APs table is capped at 5 and ordered by each AP's peak per-radio
+    channel utilization. Seed 6 APs with descending peak cu; the 5 noisiest must
+    surface (ordered) and the quietest must drop off.
     """
 
     def _seed(conn: sqlite3.Connection, now: float) -> None:
-        # Six real APs with descending cu_total, plus one NULL ap_id row whose
-        # cu_total (95) is higher than every real AP. Without the SQL fix,
-        # NULL would top the LIMIT 5 and one real AP would silently fall off.
+        # Six APs; each AP's single radio carries its peak cu. ap0 is noisiest.
         for i, cu in enumerate([90, 80, 70, 60, 50, 40]):
             conn.execute(
-                "INSERT INTO client_samples "
-                "(ts, mac, signal, tx_rate_kbps, tx_retries, "
-                " wifi_tx_attempts, radio, ap_id, ap_cu_total) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (now - i, f"AA:BB:CC:DD:EE:{i:02X}", -70, 6000, 0, 100, "ng", f"ap{i}", cu),
+                "INSERT INTO ap_samples (ts, ap_id, name, mac, cpu_pct, mem_pct) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (now, f"ap{i}", f"AP-{i}", f"aa:bb:cc:dd:ee:{i:02x}", 5.0, 20.0),
             )
-        conn.execute(
-            "INSERT INTO client_samples "
-            "(ts, mac, signal, tx_rate_kbps, tx_retries, "
-            " wifi_tx_attempts, radio, ap_id, ap_cu_total) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (now, "FF:FF:FF:FF:FF:FF", -70, 6000, 0, 100, "ng", None, 95),
-        )
+            conn.execute(
+                "INSERT INTO ap_radio_samples (ts, ap_id, radio, channel, cu_total) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (now, f"ap{i}", "ng", 6, cu),
+            )
 
     db_path = make_db(_seed)
 
@@ -90,11 +94,10 @@ def test_ac_4_overview_null_ap_id_does_not_displace_real_aps(
 
     assert response.status_code == 200
     text = response.text
-    # All five top APs (ap0..ap4 by cu_total 90,80,70,60,50) must appear.
-    for ap in ("ap0", "ap1", "ap2", "ap3", "ap4"):
-        assert ap in text, f"top-5 noisy_aps must include {ap}; NULL ap_id should not displace it"
-    # Sanity: the NULL row's marker cu_total of 95 must NOT render in the
-    # noisy AP table (it's the giveaway that NULL took a slot).
-    # We check for its tile cell shape ">95<" specifically; "95" can legitimately
-    # appear elsewhere on the page in unrelated contexts.
-    assert ">95<" not in text, "NULL-ap_id row must not appear in noisy AP table"
+    lower = text.lower()
+    # The five noisiest APs (AP-0..AP-4, peak cu 90..50) must appear, in order.
+    positions = [lower.find(f"ap-{i}") for i in range(5)]
+    assert all(p > 0 for p in positions), f"top-5 APs must all render; got {positions}"
+    assert positions == sorted(positions), "APs must be ordered noisiest-first"
+    # The quietest AP (AP-5, peak cu 40) must drop off the LIMIT 5.
+    assert "ap-5" not in lower, "the 6th-noisiest AP must not appear in the top-5 table"
