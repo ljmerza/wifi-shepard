@@ -6,6 +6,7 @@
 <table data-sortable="true">
   <thead>
     <tr>
+      <th><a href="?sort=name">Name</a></th>
       <th><a href="?sort=mac">MAC</a></th>
       <th><a href="?sort=kicks">Kicks</a></th>
       <th><a href="?sort=last_bad">Last kick</a></th>
@@ -16,6 +17,7 @@
   <tbody>
     {% for row in rows %}
     <tr>
+      <td><a href="/devices/{{ row.mac }}">{{ row.name or "—" }}</a></td>
       <td><a href="/devices/{{ row.mac }}">{{ row.mac }}</a></td>
       <td>{{ row.kick_count }}</td>
       <td title="{{ row.last_kick_ts | int if row.last_kick_ts else '' }}">

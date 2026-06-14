@@ -402,6 +402,115 @@ async def test_send_btm_request_posts_to_cmd_devmgr_with_bss_transition_payload(
 
 
 @pytest.mark.asyncio
+async def test_list_wireless_clients_maps_name_from_raw():
+    from wifi_shepard.controllers import UniFiController
+
+    clients_fixture = _load_fixture("unifi_clients.json")
+    devices_fixture = _load_fixture("unifi_devices.json")
+
+    controller = UniFiController(host=HOST, username="shepard", password="secret", port=PORT)
+    try:
+        with aioresponses() as m:
+            _stub_login(m)
+            m.get(
+                f"{BASE}{SITE_PREFIX}/stat/sta",
+                status=200,
+                content_type="application/json",
+                body=json.dumps(clients_fixture),
+            )
+            m.get(
+                f"{BASE}{SITE_PREFIX}/stat/device",
+                status=200,
+                content_type="application/json",
+                body=json.dumps(devices_fixture),
+            )
+            await controller.login()
+            snapshots = await controller.list_wireless_clients()
+
+        by_mac = {s.mac: s for s in snapshots}
+        assert by_mac["aa:bb:cc:dd:ee:01"].name == "wled-kitchen"
+        assert by_mac["aa:bb:cc:dd:ee:02"].name == "phone"
+    finally:
+        await controller.close()
+
+
+@pytest.mark.asyncio
+async def test_list_ap_stats_maps_cpu_mem_and_per_radio_channel():
+    from wifi_shepard.controllers import UniFiController
+
+    devices_fixture = _load_fixture("unifi_devices.json")
+
+    controller = UniFiController(host=HOST, username="shepard", password="secret", port=PORT)
+    try:
+        with aioresponses() as m:
+            _stub_login(m)
+            m.get(
+                f"{BASE}{SITE_PREFIX}/stat/device",
+                status=200,
+                content_type="application/json",
+                body=json.dumps(devices_fixture),
+            )
+            await controller.login()
+            aps = await controller.list_ap_stats()
+
+        assert len(aps) == 1, "UDM (type=udm) must be filtered out"
+        ap = aps[0]
+        assert ap.mac == "ff:ee:dd:cc:bb:aa"
+        assert ap.id == ap.mac, "id and mac must match (Protocol identifier convention)"
+        assert ap.name == "Front Porch"
+        assert ap.cpu_pct == pytest.approx(6.4)
+        assert ap.mem_pct == pytest.approx(42.1)
+        by_radio = {r.radio: r for r in ap.radios}
+        assert set(by_radio) == {"ng", "na"}
+        assert by_radio["ng"].channel == 6
+        assert by_radio["ng"].cu_total == 72
+        assert by_radio["na"].channel == 36
+        assert by_radio["na"].cu_total == 35
+    finally:
+        await controller.close()
+
+
+@pytest.mark.asyncio
+async def test_list_ap_stats_missing_system_stats_yields_none_cpu_mem():
+    """CPU/mem are fail-soft (None when absent), unlike the fail-closed cu_total."""
+    from wifi_shepard.controllers import UniFiController
+
+    devices_fixture = _load_fixture("unifi_devices.json")
+    del devices_fixture["data"][0]["system-stats"]
+
+    controller = UniFiController(host=HOST, username="shepard", password="secret", port=PORT)
+    try:
+        with aioresponses() as m:
+            _stub_login(m)
+            m.get(
+                f"{BASE}{SITE_PREFIX}/stat/device",
+                status=200,
+                content_type="application/json",
+                body=json.dumps(devices_fixture),
+            )
+            await controller.login()
+            aps = await controller.list_ap_stats()
+
+        assert aps[0].cpu_pct is None
+        assert aps[0].mem_pct is None
+        # Radio stats are independent of system-stats and must still map.
+        assert {r.radio for r in aps[0].radios} == {"ng", "na"}
+    finally:
+        await controller.close()
+
+
+def test_parse_pct_handles_plain_percent_and_blank():
+    from wifi_shepard.controllers.unifi import _parse_pct
+
+    assert _parse_pct("5.2") == pytest.approx(5.2)
+    assert _parse_pct("5.2%") == pytest.approx(5.2)
+    assert _parse_pct(" 12 ") == pytest.approx(12.0)
+    assert _parse_pct("") is None
+    assert _parse_pct(None) is None
+    assert _parse_pct("n/a") is None
+
+
+@pytest.mark.asyncio
 async def test_port_kwarg_is_used_in_request_url():
     from wifi_shepard.controllers import UniFiController
 

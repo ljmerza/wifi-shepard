@@ -31,6 +31,31 @@ def _format_ts(ts: float | int | None) -> str:
     return datetime.fromtimestamp(float(ts), tz=UTC).strftime("%Y-%m-%d %H:%M:%S UTC")
 
 
+# UniFi radio identifiers → human band label for the noisy-APs table. Unknown
+# ids pass through unchanged so a new band shows *something* rather than "?".
+_RADIO_BANDS = {"ng": "2.4", "na": "5", "6e": "6"}
+
+
+def _radio_band(radio: str | None) -> str:
+    if not radio:
+        return "?"
+    return _RADIO_BANDS.get(radio, radio)
+
+
+def _refresh_seconds() -> int:
+    """Overview auto-refresh interval (seconds) from env; default 60, 0 disables.
+
+    A non-integer or negative value falls back to the 60s default rather than
+    breaking the page with a bad <meta refresh> value.
+    """
+    raw = os.environ.get("WIFI_SHEPARD_UI_REFRESH_SECONDS", "60")
+    try:
+        seconds = int(raw)
+    except ValueError:
+        return 60
+    return seconds if seconds >= 0 else 60
+
+
 # OperationalError messages we treat as "DB not yet populated" — render the
 # empty-state page (AC-8) instead of a 500. Anything else (locked DB, disk
 # I/O, corruption) is a real failure: log + re-raise so it surfaces.
@@ -94,6 +119,11 @@ def create_app(*, db_path: Path) -> FastAPI:
     app = FastAPI(title="wifi-shepard-ui", docs_url=None, redoc_url=None)
     templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
     templates.env.filters["fmt_ts"] = _format_ts
+    templates.env.filters["radio_band"] = _radio_band
+
+    # Snapshot the auto-refresh interval at construction time (matches the env
+    # snapshot pattern below; a container restart picks up changes).
+    refresh_seconds = _refresh_seconds()
 
     # Snapshot the env var at construction time. Tests monkeypatch the env
     # and rebuild the app per-case, which matches a real container restart.
@@ -168,7 +198,11 @@ def create_app(*, db_path: Path) -> FastAPI:
     @app.get("/", response_class=HTMLResponse)
     def overview(request: Request):
         stats = _safe_read(lambda c: views.overview(c, now=time.time()), empty_stats)
-        return templates.TemplateResponse(request, "overview.html", {"stats": stats})
+        return templates.TemplateResponse(
+            request,
+            "overview.html",
+            {"stats": stats, "refresh_seconds": refresh_seconds},
+        )
 
     @app.get("/devices", response_class=HTMLResponse)
     def devices(request: Request, sort: str = "mac"):

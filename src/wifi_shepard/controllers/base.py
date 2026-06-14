@@ -14,6 +14,7 @@ class ClientSnapshot:
     radio: str
     ap_id: str
     ap_cu_total: int
+    name: str | None = None
 
 
 @dataclass(frozen=True)
@@ -28,6 +29,24 @@ class RadioStats:
     radio: str
     cu_total: int
     bssid: str
+    channel: int = 0
+
+
+@dataclass(frozen=True)
+class APStats:
+    """AP-level health snapshot: device identity + CPU/memory load + per-radio
+    channel utilization. Surfaced for the read-only UI's "noisy APs" view.
+
+    ``cpu_pct`` / ``mem_pct`` are ``None`` when the controller doesn't report
+    them (fail-soft for display, unlike the fail-closed detection path).
+    """
+
+    id: str
+    name: str
+    mac: str
+    cpu_pct: float | None
+    mem_pct: float | None
+    radios: tuple[RadioStats, ...]
 
 
 @runtime_checkable
@@ -55,6 +74,15 @@ class Controller(Protocol):
     async def list_aps(self) -> list[APSnapshot]: ...
 
     async def get_ap_radio_stats(self, ap_id: str) -> list[RadioStats]: ...
+
+    async def list_ap_stats(self) -> list[APStats]:
+        """AP-level health snapshots (identity + CPU/mem + per-radio CU) for the UI.
+
+        Single-pass over the controller's device list, so callers don't pay the
+        per-AP cost of ``get_ap_radio_stats``. Backends that can't report CPU/mem
+        set those fields to ``None``.
+        """
+        ...
 
     async def force_reconnect_client(self, mac: str) -> None: ...
 
