@@ -5,6 +5,7 @@ from collections import deque
 from collections.abc import Callable
 from typing import Any
 
+from .reboot import normalize_mac
 from .resolution import apply_quiet_hours, quiet_hours_active, resolve_thresholds
 
 
@@ -61,7 +62,9 @@ class Scorer:
 
     def ingest(self, client: Any) -> dict[str, Any] | None:
         mac = client.mac
-        if mac in self.config.allowlist:
+        # Controllers report MAC case inconsistently across firmware versions, so
+        # compare canonically: config.allowlist is already normalized at load.
+        if normalize_mac(mac) in self.config.allowlist:
             return None
         thresholds = resolve_thresholds(mac, self.config)
         # ADR-0007: during quiet hours, tighten to the stricter override thresholds

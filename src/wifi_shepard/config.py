@@ -12,6 +12,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import yaml
 
+from wifi_shepard.reboot import normalize_mac
 from wifi_shepard.reboot.oui import looks_like_espressif
 
 logger = logging.getLogger("wifi_shepard.config")
@@ -108,11 +109,61 @@ def _walk_and_interpolate(value: Any) -> Any:
     return value
 
 
+# Interpolation runs over the whole tree before any structural check, so a fragment
+# that fails validation still holds the live UNIFI_PASSWORD / HA_TOKEN. The
+# repr=False on ControllerSpec.password / HomeAssistantConfig.token cannot help: a
+# rejected fragment never becomes a dataclass, and it is the raw dict that gets
+# repr'd into the message — which reaches stderr at startup and container logs via
+# main's config_reload_failed on SIGHUP. ADR-0001: those two are never logged.
+_SECRET_KEYS: frozenset[str] = frozenset({"password", "token"})
+_REDACTED = "***"
+
+
+def _redact(value: Any) -> Any:
+    """Copy of ``value`` with any secret-keyed entry masked, at any depth."""
+    if isinstance(value, Mapping):
+        return {
+            k: _REDACTED if isinstance(k, str) and k.lower() in _SECRET_KEYS else _redact(v)
+            for k, v in value.items()
+        }
+    if isinstance(value, list):
+        return [_redact(item) for item in value]
+    return value
+
+
+def _describe(value: Any) -> str:
+    """Render a rejected config fragment for an error message without leaking secrets.
+
+    Containers keep their (redacted) contents — the key names are what make the message
+    worth reading. A bare scalar is described by type alone: an interpolated
+    ``${UNIFI_PASSWORD}`` that lands where a list or mapping was expected *is* the
+    scalar, and there is no key to mask it by.
+    """
+    if isinstance(value, (Mapping, list)):
+        return f"{type(value).__name__}: {_redact(value)!r}"
+    return type(value).__name__
+
+
+def _require_mac(value: Any, key: str) -> str:
+    """Validate and canonicalize a MAC from config.
+
+    Fails closed on a malformed entry. Storing it raw meant it simply never matched, so
+    a typo in a safety-critical list silently protected nothing — the failure mode this
+    is here to prevent.
+    """
+    if not isinstance(value, str):
+        raise ValueError(f"{key} must be a MAC address string; got {type(value).__name__}")
+    mac = normalize_mac(value)
+    if not _is_valid_mac(mac):
+        raise ValueError(f"{key} must be a MAC address like aa:bb:cc:dd:ee:ff; got {value!r}")
+    return mac
+
+
 def _require_sequence(value: Any, key: str) -> list[Any]:
     if value is None:
         return []
     if isinstance(value, (str, bytes)) or not isinstance(value, Sequence):
-        raise ValueError(f"{key} must be a YAML list, got {type(value).__name__}: {value!r}")
+        raise ValueError(f"{key} must be a YAML list, got {_describe(value)}")
     return list(value)
 
 
@@ -120,9 +171,7 @@ def _require_mapping_items(items: list[Any], key: str) -> list[Mapping[str, Any]
     out: list[Mapping[str, Any]] = []
     for i, item in enumerate(items):
         if not isinstance(item, Mapping):
-            raise ValueError(
-                f"{key}[{i}] must be a YAML mapping, got {type(item).__name__}: {item!r}"
-            )
+            raise ValueError(f"{key}[{i}] must be a YAML mapping, got {_describe(item)}")
         out.append(item)
     return out
 
@@ -331,9 +380,7 @@ def _build_home_assistant(raw: Mapping[str, Any] | None) -> HomeAssistantConfig 
     if raw is None:
         return None
     if not isinstance(raw, Mapping):
-        raise ValueError(
-            f"home_assistant must be a YAML mapping, got {type(raw).__name__}: {raw!r}"
-        )
+        raise ValueError(f"home_assistant must be a YAML mapping, got {_describe(raw)}")
     for key in ("url", "token", "notify_service"):
         value = raw.get(key)
         if not isinstance(value, str) or not value:
@@ -390,7 +437,7 @@ def _build_reboot(raw: Mapping[str, Any] | None) -> RebootConfig:
     if raw is None:
         return RebootConfig()
     if not isinstance(raw, Mapping):
-        raise ValueError(f"reboot must be a YAML mapping, got {type(raw).__name__}: {raw!r}")
+        raise ValueError(f"reboot must be a YAML mapping, got {_describe(raw)}")
 
     enabled = raw.get("enabled", False)
     if not isinstance(enabled, bool):
@@ -452,9 +499,7 @@ def _build_reboot_cooldown(raw: Mapping[str, Any] | None) -> RebootCooldownConfi
     if raw is None:
         return RebootCooldownConfig()
     if not isinstance(raw, Mapping):
-        raise ValueError(
-            f"reboot.cooldown must be a YAML mapping, got {type(raw).__name__}: {raw!r}"
-        )
+        raise ValueError(f"reboot.cooldown must be a YAML mapping, got {_describe(raw)}")
     return RebootCooldownConfig(
         per_device_seconds=_require_non_negative_int(
             raw.get("per_device_seconds", 3600), "reboot.cooldown.per_device_seconds"
@@ -469,9 +514,7 @@ def _build_reboot_proactive(raw: Mapping[str, Any] | None) -> RebootProactiveCon
     if raw is None:
         return RebootProactiveConfig()
     if not isinstance(raw, Mapping):
-        raise ValueError(
-            f"reboot.proactive must be a YAML mapping, got {type(raw).__name__}: {raw!r}"
-        )
+        raise ValueError(f"reboot.proactive must be a YAML mapping, got {_describe(raw)}")
     schedule = raw.get("schedule", "03:30")
     if not isinstance(schedule, str) or _SCHEDULE_PATTERN.match(schedule) is None:
         raise ValueError(
@@ -487,9 +530,7 @@ def _build_reboot_reactive(raw: Mapping[str, Any] | None) -> RebootReactiveConfi
     if raw is None:
         return RebootReactiveConfig()
     if not isinstance(raw, Mapping):
-        raise ValueError(
-            f"reboot.reactive must be a YAML mapping, got {type(raw).__name__}: {raw!r}"
-        )
+        raise ValueError(f"reboot.reactive must be a YAML mapping, got {_describe(raw)}")
     probe_raw = raw.get("probe")
     probe = RebootProbeConfig()
     if probe_raw is not None:
@@ -544,7 +585,7 @@ def _build_quiet_hours(raw: Mapping[str, Any] | None) -> QuietHoursConfig | None
     if raw is None:
         return None
     if not isinstance(raw, Mapping):
-        raise ValueError(f"quiet_hours must be a YAML mapping, got {type(raw).__name__}: {raw!r}")
+        raise ValueError(f"quiet_hours must be a YAML mapping, got {_describe(raw)}")
     for key in ("start", "end", "timezone"):
         if not isinstance(raw.get(key), str) or not raw[key]:
             raise ValueError(f"quiet_hours.{key} is required and must be a non-empty string")
@@ -685,9 +726,14 @@ def build_config(
     safety_rails_cfg = _build_safety_rails(safety_rails)
     quiet_hours_cfg = _build_quiet_hours(quiet_hours)
     reboot_cfg = _build_reboot(reboot)
+    # The allowlist is the daemon's primary safety control, so it is canonicalized once
+    # here and every consumer compares against that one form. It used to be stored raw
+    # and matched exactly, which meant an uppercase entry (the form printed on device
+    # labels) silently protected nothing.
+    allowlist_typed = tuple(_require_mac(m, f"allowlist[{i}]") for i, m in enumerate(allowlist))
     # Config-load advisories for the reboot: block (ADR-0005). MAC comparison uses
     # the same canonical form as reboot.normalize_mac (strip + lowercase).
-    allowlist_norm = {str(m).strip().lower() for m in allowlist}
+    allowlist_norm = set(allowlist_typed)
     eligible_norm = {m.strip().lower() for m in reboot_cfg.eligible}
     for mac in reboot_cfg.eligible:
         if mac.strip().lower() in allowlist_norm:
@@ -714,7 +760,7 @@ def build_config(
         quiet_hours=quiet_hours_cfg,
         reboot=reboot_cfg,
         overrides=overrides_typed,
-        allowlist=tuple(allowlist),
+        allowlist=allowlist_typed,
         controllers=controllers_typed,
         home_assistant=home_assistant_cfg,
     )
