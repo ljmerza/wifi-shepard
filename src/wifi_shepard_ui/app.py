@@ -259,6 +259,24 @@ def create_app(*, db_path: Path) -> FastAPI:
             request, "history.html", {"mac": mac, "events": events, "active_page": "devices"}
         )
 
+    @app.get("/dns", response_class=HTMLResponse)
+    def dns(request: Request):
+        # One connection for all three reads (ADR-0012). Each read tolerates its
+        # table/column being absent (old daemon DB) by returning [].
+        def _read(c):
+            return (
+                views.dns_source_health(c),
+                views.dns_near_threshold(c),
+                views.dns_thrash_kicks(c),
+            )
+
+        health, near, kicks = _safe_read(_read, ([], [], []))
+        return templates.TemplateResponse(
+            request,
+            "dns.html",
+            {"health": health, "near": near, "kicks": kicks, "active_page": "dns"},
+        )
+
     _assert_no_write_routes(app)
     return app
 

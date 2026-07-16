@@ -105,6 +105,41 @@ class OverviewStats:
     kicks_by_hour: tuple[int, ...] = ()  # real kicks per hour, trailing 24h, oldest-first
 
 
+@dataclass(frozen=True)
+class DnsSourceHealth:
+    """Latest per-poll heartbeat for one Pi-hole instance (ADR-0012)."""
+
+    name: str
+    ok: bool
+    query_count: int
+    last_ts: float | None
+    error: str | None = None
+    volume: tuple[int, ...] = ()  # recent query_counts, oldest-first (sparkline)
+
+
+@dataclass(frozen=True)
+class DnsObservation:
+    """One near-threshold (MAC, domain) standing from the latest poll (ADR-0012)."""
+
+    mac: str
+    domain: str
+    count: int
+    threshold: int
+    over_since: float | None
+    name: str | None = None
+
+
+@dataclass(frozen=True)
+class DnsKick:
+    """A kick that DNS-thrash detection triggered (ADR-0012)."""
+
+    ts: float
+    mac: str
+    mechanism: str | None
+    dry_run: bool
+    name: str | None = None
+
+
 def derive_state(*, kick_count: int, last_kick_ts: float | None, now: float) -> str:
     """Map kick history to a backoff-state label.
 
@@ -392,3 +427,110 @@ def overview(conn: sqlite3.Connection, *, now: float) -> OverviewStats:
         noisy_aps=noisy_aps,
         kicks_by_hour=kicks_by_hour(conn, now=now),
     )
+
+
+def _latest_client_names(conn: sqlite3.Connection) -> dict[str, str | None]:
+    """Latest controller-reported name per MAC. Degrades to {} if the daemon
+    hasn't run the client_samples `name`-column migration yet (partial deploy)."""
+    try:
+        return {
+            mac: name
+            for mac, name in conn.execute(
+                "SELECT mac, name FROM client_samples "
+                "WHERE id IN (SELECT MAX(id) FROM client_samples GROUP BY mac)"
+            )
+        }
+    except sqlite3.OperationalError:
+        return {}
+
+
+def dns_source_health(
+    conn: sqlite3.Connection, *, volume_points: int = 24
+) -> list[DnsSourceHealth]:
+    """Latest heartbeat per Pi-hole instance + a recent query-volume series (ADR-0012).
+
+    Returns [] — rather than raising — when dns_source_samples doesn't exist yet
+    (daemon not upgraded / feature off), so the page renders an empty state.
+    """
+    try:
+        latest = conn.execute(
+            "SELECT source_name, ts, ok, query_count, error FROM dns_source_samples "
+            "WHERE id IN (SELECT MAX(id) FROM dns_source_samples GROUP BY source_name)"
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return []
+
+    out: list[DnsSourceHealth] = []
+    for name, ts, ok, query_count, error in sorted(latest, key=lambda r: r[0]):
+        volume = [
+            int(v or 0)
+            for (v,) in conn.execute(
+                "SELECT query_count FROM dns_source_samples WHERE source_name = ? "
+                "ORDER BY ts DESC LIMIT ?",
+                (name, volume_points),
+            )
+        ]
+        out.append(
+            DnsSourceHealth(
+                name=name,
+                ok=bool(ok),
+                query_count=query_count or 0,
+                last_ts=ts,
+                error=error,
+                volume=tuple(reversed(volume)),
+            )
+        )
+    return out
+
+
+def dns_near_threshold(conn: sqlite3.Connection) -> list[DnsObservation]:
+    """The latest poll's near-threshold standings, noisiest first (ADR-0012).
+
+    Reads only the newest snapshot (max ts) so the table shows current contenders,
+    not historical ones. Empty list when the table is absent.
+    """
+    try:
+        rows = conn.execute(
+            "SELECT mac, domain, query_count, threshold, over_since "
+            "FROM dns_thrash_observations "
+            "WHERE ts = (SELECT MAX(ts) FROM dns_thrash_observations)"
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return []
+
+    names = _latest_client_names(conn)
+    obs = [
+        DnsObservation(
+            mac=mac,
+            domain=domain,
+            count=count,
+            threshold=threshold,
+            over_since=over_since,
+            name=names.get(mac),
+        )
+        for mac, domain, count, threshold, over_since in rows
+    ]
+    obs.sort(key=lambda o: o.count, reverse=True)
+    return obs
+
+
+def dns_thrash_kicks(conn: sqlite3.Connection, *, limit: int = 20) -> list[DnsKick]:
+    """Recent kicks that DNS-thrash detection triggered (ADR-0012).
+
+    Tolerates a pre-ADR-0012 kick_events table with no `trigger` column (returns
+    [] rather than 500-ing) for the partial-deploy window.
+    """
+    try:
+        rows = conn.execute(
+            "SELECT ts, mac, mechanism, dry_run FROM kick_events "
+            "WHERE trigger = 'dns_thrash' ORDER BY ts DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return []
+
+    names = _latest_client_names(conn)
+    return [
+        DnsKick(ts=ts, mac=mac, mechanism=mechanism, dry_run=bool(dry_run), name=names.get(mac))
+        for ts, mac, mechanism, dry_run in rows
+    ]
