@@ -1,31 +1,42 @@
 {% extends "base.html" %}
 {% block title %}{{ mac }} — wifi-shepard{% endblock %}
 {% block body %}
-<h1>History — {{ mac }}</h1>
+<h1>History <span class="mac-title">{{ mac }}</span></h1>
 {% if events %}
-<table>
-  <thead>
-    <tr><th>When (UTC)</th><th>Kind</th><th>Mechanism</th><th>Attempt group</th><th>Detail</th></tr>
-  </thead>
-  <tbody>
-    {% for ev in events %}
-    <tr class="{{ 'dry' if ev.kind == 'kick_dry_run' else '' }}"
-        {%- if ev.attempt_group %} data-attempt-group="{{ ev.attempt_group }}"{% endif %}>
-      <td title="{{ ev.ts | int }}">{{ ev.ts | fmt_ts }}</td>
-      <td>
-        {%- if ev.kind == 'kick_dry_run' -%}dry-run kick
-        {%- elif ev.kind == 'kick' -%}kick
-        {%- else -%}sample
-        {%- endif -%}
-      </td>
-      <td class="mechanism">{% if ev.mechanism %}{{ ev.mechanism }}{% endif %}</td>
-      <td class="attempt-group">{% if ev.attempt_group %}{{ ev.attempt_group }}{% endif %}</td>
-      <td>{{ ev.detail }}</td>
-    </tr>
-    {% endfor %}
-  </tbody>
-</table>
+<div class="card">
+  <div class="card-head">
+    <h2>{{ events | length }} event{{ "" if events | length == 1 else "s" }}</h2>
+    <span class="card-note">Newest first · rows sharing an attempt group are one logical action</span>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>When (UTC)</th><th>Kind</th><th>Mechanism</th><th>Attempt group</th><th>Detail</th></tr>
+      </thead>
+      <tbody>
+        {% for ev in events %}
+        <tr class="{{ 'dry' if ev.kind == 'kick_dry_run' else '' }}"
+            {%- if ev.attempt_group %} data-attempt-group="{{ ev.attempt_group }}"{% endif %}>
+          <td data-label="When (UTC)" class="muted nowrap" title="{{ ev.ts | int }}">{{ ev.ts | fmt_ts }}</td>
+          <td data-label="Kind">
+            {%- if ev.kind == 'kick_dry_run' -%}<span class="badge badge-evaluating">dry-run kick</span>
+            {%- elif ev.kind == 'kick' -%}<span class="badge badge-quarantine">kick</span>
+            {%- else -%}<span class="badge badge-neutral">sample</span>
+            {%- endif -%}
+          </td>
+          <td data-label="Mechanism" class="mechanism">{% if ev.mechanism %}<span class="badge badge-neutral">{{ ev.mechanism }}</span>{% endif %}</td>
+          <td data-label="Attempt group" class="attempt-group group-id" title="{{ ev.attempt_group or '' }}">{% if ev.attempt_group %}{{ ev.attempt_group[:8] }}…{% endif %}</td>
+          <td data-label="Detail" class="mono muted">{{ ev.detail }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
 {% else %}
-<p class="empty">No events recorded for {{ mac }}.</p>
+<div class="card">
+  <p class="empty">No events recorded for {{ mac }}.</p>
+</div>
 {% endif %}
+<p style="margin-top:1rem"><a href="/devices">← All devices</a></p>
 {% endblock %}

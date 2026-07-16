@@ -3,33 +3,49 @@
 {% block body %}
 <h1>Devices</h1>
 {% if rows %}
-<table data-sortable="true">
-  <thead>
-    <tr>
-      <th><a href="?sort=name">Name</a></th>
-      <th><a href="?sort=mac">MAC</a></th>
-      <th><a href="?sort=kicks">Kicks</a></th>
-      <th><a href="?sort=last_bad">Last kick</a></th>
-      <th><a href="?sort=state">State</a></th>
-      <th>Allowlist</th>
-    </tr>
-  </thead>
-  <tbody>
-    {% for row in rows %}
-    <tr>
-      <td><a href="/devices/{{ row.mac }}">{{ row.name or "—" }}</a></td>
-      <td><a href="/devices/{{ row.mac }}">{{ row.mac }}</a></td>
-      <td>{{ row.kick_count }}</td>
-      <td title="{{ row.last_kick_ts | int if row.last_kick_ts else '' }}">
-        {{ row.last_kick_ts | fmt_ts }}
-      </td>
-      <td>{{ row.state }}</td>
-      <td>{{ "yes" if row.allowlisted else "no" }}</td>
-    </tr>
-    {% endfor %}
-  </tbody>
-</table>
+<div class="card">
+  <div class="card-head">
+    <h2>{{ rows | length }} tracked device{{ "" if rows | length == 1 else "s" }}</h2>
+    <span class="card-note">Sorted by {{ sort }}</span>
+  </div>
+  <div class="sort-bar" role="group" aria-label="Sort devices">
+    <span class="sort-bar-label">Sort</span>
+    <a href="?sort=name"{% if sort == "name" %} class="on"{% endif %}>Name</a>
+    <a href="?sort=mac"{% if sort == "mac" %} class="on"{% endif %}>MAC</a>
+    <a href="?sort=kicks"{% if sort == "kicks" %} class="on"{% endif %}>Kicks</a>
+    <a href="?sort=last_bad"{% if sort == "last_bad" %} class="on"{% endif %}>Last kick</a>
+    <a href="?sort=state"{% if sort == "state" %} class="on"{% endif %}>State</a>
+  </div>
+  <div class="table-wrap">
+    <table data-sortable="true">
+      <thead>
+        <tr>
+          <th><a href="?sort=name">Name</a></th>
+          <th><a href="?sort=mac">MAC</a></th>
+          <th><a href="?sort=kicks">Kicks</a></th>
+          <th><a href="?sort=last_bad">Last kick</a></th>
+          <th><a href="?sort=state">State</a></th>
+          <th>Allowlist</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in rows %}
+        <tr>
+          <td data-label="Name"><a href="/devices/{{ row.mac }}">{{ row.name or "—" }}</a></td>
+          <td data-label="MAC" class="mono"><a href="/devices/{{ row.mac }}">{{ row.mac }}</a></td>
+          <td data-label="Kicks" class="num">{{ row.kick_count }}</td>
+          <td data-label="Last kick" class="muted nowrap" title="{{ row.last_kick_ts | int if row.last_kick_ts else '' }}">{{ row.last_kick_ts | fmt_ts }}</td>
+          <td data-label="State"><span class="badge badge-{{ row.state | lower }}">{{ row.state }}</span></td>
+          <td data-label="Allowlist">{% if row.allowlisted %}<span class="badge badge-neutral">yes</span>{% else %}<span class="muted">no</span>{% endif %}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
 {% else %}
-<p class="empty">No clients tracked yet. The daemon must run for at least one poll cycle for data to appear here.</p>
+<div class="card">
+  <p class="empty">No clients tracked yet. The daemon must run for at least one poll cycle for data to appear here.</p>
+</div>
 {% endif %}
 {% endblock %}
