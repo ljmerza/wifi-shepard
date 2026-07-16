@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import ssl
 from dataclasses import dataclass
 from typing import Any
@@ -10,6 +11,17 @@ from aiounifi.models.api import ApiRequest
 from aiounifi.models.configuration import Configuration
 
 from .base import APSnapshot, APStats, ClientSnapshot, RadioStats
+
+logger = logging.getLogger("wifi_shepard.controllers.unifi")
+
+# Wireless-client stat fields the detection pipeline needs. A non-wired client can
+# legitimately sit in the controller's table with NONE of these (asleep / mid-roam /
+# stale entry — e.g. an iDevice on a private MAC), and one such entry must not abort
+# the whole scan cycle — it is skipped with a warning. Only the all-absent form is
+# tolerated: a client missing *some* fields (or carrying a mistyped one) still fails
+# closed via _require below, so real schema drift surfaces instead of silently
+# skipping every client.
+_CLIENT_STAT_KEYS = ("ap_mac", "radio", "signal", "tx_rate", "tx_retries", "wifi_tx_attempts")
 
 
 @dataclass
@@ -114,6 +126,9 @@ class UniFiController:
         self.name = name
         self._session: aiohttp.ClientSession | None = None
         self._unifi: aiounifi.Controller | None = None
+        # MACs already warned about as stat-less, so a client that sleeps for hours
+        # produces one warning, not one per poll. Cleared when the client recovers.
+        self._incomplete_warned: set[str] = set()
 
     async def login(self) -> None:
         if self._unifi is not None:
@@ -156,7 +171,17 @@ class UniFiController:
             raw = client.raw
             if raw.get("is_wired", False):
                 continue
+            if all(key not in raw for key in _CLIENT_STAT_KEYS):
+                ident = raw.get("mac") or raw.get("hostname") or "<unknown>"
+                if ident not in self._incomplete_warned:
+                    self._incomplete_warned.add(ident)
+                    logger.warning(
+                        "client_snapshot_incomplete",
+                        extra={"client": ident, "missing": ",".join(_CLIENT_STAT_KEYS)},
+                    )
+                continue
             mac = _require(raw, "mac", str, owner="client")
+            self._incomplete_warned.discard(mac)
             ap_mac = _require(raw, "ap_mac", str, owner="client")
             radio = _require(raw, "radio", str, owner="client")
             cu_total = cu_lookup.get((ap_mac, radio), 0)
