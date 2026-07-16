@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+import math
 from typing import TYPE_CHECKING, Any
 
 from .controllers.base import Controller
@@ -14,6 +16,12 @@ if TYPE_CHECKING:
     from .dns_thrash import DnsThrashDetector
     from .rate_limit import KickRateLimiter
     from .scorer import Scorer
+
+logger = logging.getLogger("wifi_shepard.scanner")
+
+# ADR-0012: cap how many near-threshold contenders are persisted per poll so a
+# noisy cycle can't write an unbounded batch of observation rows.
+_DNS_OBSERVATION_TOP_N = 20
 
 
 class Scanner:
@@ -114,6 +122,13 @@ class Scanner:
         if detector is None or pipeline is None:
             return
         flagged = await detector.observe(clients)
+        # ADR-0012: persist observability every cycle — even when nothing is flagged,
+        # so the UI can prove the source authenticated and polled. Fail-soft: a write
+        # error here must never break the scan loop or the RF remediation path below.
+        try:
+            await self._persist_dns_observability(detector)
+        except Exception:
+            logger.warning("dns_observability_persist_failed")
         if not flagged:
             return
         client_by_mac = {client.mac: client for client in clients}
@@ -129,3 +144,22 @@ class Scanner:
                 # (disconnected) — nothing to kick.
                 continue
             await pipeline.actor.handle(client, {"trigger": "dns_thrash"})
+
+    async def _persist_dns_observability(self, detector: Any) -> None:
+        # ADR-0012: write a per-poll health heartbeat (one row per DNS instance).
+        source = getattr(detector, "source", None)
+        if source is not None and hasattr(source, "last_poll_status"):
+            for st in source.last_poll_status():
+                await self.db.insert_dns_source_sample(
+                    source_name=st["name"],
+                    ok=st["ok"],
+                    query_count=st["query_count"],
+                    error=st.get("error"),
+                )
+        # Persist only contenders (count >= half the threshold), top-N capped, so
+        # quiet domains don't flood the table.
+        standings = detector.standings() if hasattr(detector, "standings") else []
+        contenders = [s for s in standings if s["count"] >= math.ceil(0.5 * s["threshold"])]
+        contenders.sort(key=lambda s: s["count"], reverse=True)
+        if contenders:
+            await self.db.insert_dns_thrash_observations(contenders[:_DNS_OBSERVATION_TOP_N])

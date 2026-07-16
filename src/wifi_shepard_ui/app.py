@@ -237,11 +237,19 @@ def create_app(*, db_path: Path) -> FastAPI:
 
     @app.get("/", response_class=HTMLResponse)
     def overview(request: Request):
-        stats = _safe_read(lambda c: views.overview(c, now=time.time()), empty_stats)
+        stats, dns_health = _safe_read(
+            lambda c: (views.overview(c, now=time.time()), views.dns_source_health(c)),
+            (empty_stats, []),
+        )
         return templates.TemplateResponse(
             request,
             "overview.html",
-            {"stats": stats, "refresh_seconds": refresh_seconds, "active_page": "overview"},
+            {
+                "stats": stats,
+                "dns_health": dns_health,
+                "refresh_seconds": refresh_seconds,
+                "active_page": "overview",
+            },
         )
 
     @app.get("/devices", response_class=HTMLResponse)
@@ -257,6 +265,24 @@ def create_app(*, db_path: Path) -> FastAPI:
         events = _safe_read(lambda c: views.device_history(c, mac=mac), [])
         return templates.TemplateResponse(
             request, "history.html", {"mac": mac, "events": events, "active_page": "devices"}
+        )
+
+    @app.get("/dns", response_class=HTMLResponse)
+    def dns(request: Request):
+        # One connection for all three reads (ADR-0012). Each read tolerates its
+        # table/column being absent (old daemon DB) by returning [].
+        def _read(c):
+            return (
+                views.dns_source_health(c),
+                views.dns_near_threshold(c),
+                views.dns_thrash_kicks(c),
+            )
+
+        health, near, kicks = _safe_read(_read, ([], [], []))
+        return templates.TemplateResponse(
+            request,
+            "dns.html",
+            {"health": health, "near": near, "kicks": kicks, "active_page": "dns"},
         )
 
     _assert_no_write_routes(app)

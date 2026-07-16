@@ -45,6 +45,24 @@
   </div>
 </div>
 
+{% if dns_health %}
+<div class="card" style="margin-top:1.5rem">
+  <div class="card-head">
+    <h2>DNS sources</h2>
+    <span class="card-note"><a href="/dns">DNS-thrash detail →</a></span>
+  </div>
+  <div style="padding:0.6rem 1rem; display:flex; flex-wrap:wrap; gap:0.5rem 1.25rem;">
+    {% for s in dns_health %}
+    <span class="nowrap">
+      {% if s.ok %}<span class="badge badge-normal">ok</span>{% else %}<span class="badge badge-quarantine">down</span>{% endif %}
+      <strong>{{ s.name }}</strong>
+      <span class="muted">{{ s.query_count }} q · {{ s.last_ts | fmt_ts }}</span>
+    </span>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+
 <div class="card" style="margin-top:1.5rem">
   <div class="card-head">
     <h2>Top noisy APs</h2>

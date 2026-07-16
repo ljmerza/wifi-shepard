@@ -51,6 +51,14 @@ class DnsThrashDetector:
         # Fetch only the delta since the last poll so a query is counted once; None on
         # the first poll bootstraps with one window of history.
         self._last_poll_ts: float | None = None
+        # ADR-0012: per-(MAC, domain) standings from the most recent observe() —
+        # count/threshold/over_since — so the scanner can persist near-threshold
+        # contenders for the UI. Recomputed each poll from live window state.
+        self._last_standings: list[dict[str, Any]] = []
+
+    def standings(self) -> list[dict[str, Any]]:
+        """Per-(MAC, domain) standings from the last observe() (ADR-0012)."""
+        return list(self._last_standings)
 
     def update_config(self, config: Any) -> None:
         # SIGHUP retune: swap the config so the next poll resolves the new thresholds.
@@ -78,6 +86,9 @@ class DnsThrashDetector:
             # The additive signal must never break the scan loop (ADR-0011 AC-10).
             logger.warning("dns_source_unavailable")
             self._last_poll_ts = now
+            # ADR-0012: clear standings too, so a source outage doesn't re-persist
+            # the previous poll's contenders under a fresh ts (phantom "current" rows).
+            self._last_standings = []
             return []
         self._last_poll_ts = now
 
@@ -91,10 +102,12 @@ class DnsThrashDetector:
 
         cutoff = now - window_seconds
         flagged: list[str] = []
+        standings: list[dict[str, Any]] = []
         for mac in list(self._counts.keys()):
             domains = self._counts[mac]
             threshold = resolve_dns_same_domain_max(mac, self.config)
             over = False
+            live_domains: list[tuple[str, int]] = []
             for domain in list(domains.keys()):
                 timestamps = domains[domain]
                 while timestamps and timestamps[0] < cutoff:
@@ -102,7 +115,9 @@ class DnsThrashDetector:
                 if not timestamps:
                     del domains[domain]
                     continue
-                if len(timestamps) > threshold:
+                count = len(timestamps)
+                live_domains.append((domain, count))
+                if count > threshold:
                     over = True
             if not domains:
                 # No live history left — drop the MAC (and its streak marker) so
@@ -112,11 +127,25 @@ class DnsThrashDetector:
                 continue
             if not over:
                 self._over_since.pop(mac, None)
-                continue
-            started = self._over_since.get(mac)
-            if started is None:
-                started = now
-                self._over_since[mac] = now
-            if now - started >= sustain_seconds:
-                flagged.append(mac)
+            else:
+                started = self._over_since.get(mac)
+                if started is None:
+                    started = now
+                    self._over_since[mac] = now
+                if now - started >= sustain_seconds:
+                    flagged.append(mac)
+            # ADR-0012: record standings for every live (MAC, domain) — including
+            # not-yet-over contenders — with the MAC's finalized streak marker.
+            over_since = self._over_since.get(mac)
+            for domain, count in live_domains:
+                standings.append(
+                    {
+                        "mac": mac,
+                        "domain": domain,
+                        "count": count,
+                        "threshold": threshold,
+                        "over_since": over_since,
+                    }
+                )
+        self._last_standings = standings
         return flagged

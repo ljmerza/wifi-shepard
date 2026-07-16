@@ -1,0 +1,119 @@
+{% extends "base.html" %}
+{% block title %}DNS — wifi-shepard{% endblock %}
+{% block body %}
+<h1>DNS-thrash detection</h1>
+
+<div class="card">
+  <div class="card-head">
+    <h2>Pi-hole sources</h2>
+    <span class="card-note">per-poll heartbeat · query volume</span>
+  </div>
+  {% if health %}
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Source</th>
+          <th>Status</th>
+          <th>Last poll (UTC)</th>
+          <th>Queries / poll</th>
+          <th>Volume</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for s in health %}
+        <tr>
+          <td data-label="Source">{{ s.name }}</td>
+          <td data-label="Status">
+            {%- if s.ok -%}<span class="badge badge-normal">ok</span>
+            {%- else -%}<span class="badge badge-quarantine" title="{{ s.error or '' }}">down</span>{%- endif -%}
+          </td>
+          <td data-label="Last poll" class="muted nowrap" title="{{ s.last_ts | int if s.last_ts else '' }}">{{ s.last_ts | fmt_ts }}</td>
+          <td data-label="Queries / poll" class="num">{{ s.query_count }}</td>
+          <td data-label="Volume">
+            {% set pts = s.volume | spark_points %}
+            {%- if pts -%}
+            <svg class="spark spark-mini" viewBox="0 0 100 100" preserveAspectRatio="none" role="img"
+                 aria-label="Recent query volume for {{ s.name }}">
+              <polyline class="spark-line" vector-effect="non-scaling-stroke" points="{{ pts }}"></polyline>
+            </svg>
+            {%- else -%}<span class="muted">—</span>{%- endif -%}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="empty">No DNS data yet — the daemon has not recorded any Pi-hole polls. Configure a <code>dns_sources:</code> block to enable DNS-thrash detection.</p>
+  {% endif %}
+</div>
+
+<div class="card" style="margin-top:1.5rem">
+  <div class="card-head">
+    <h2>Approaching the threshold</h2>
+    <span class="card-note">current poll · a client hammering one domain</span>
+  </div>
+  {% if near %}
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Device</th>
+          <th>MAC</th>
+          <th>Domain</th>
+          <th>Queries / window</th>
+          <th>Since</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for o in near %}
+        <tr>
+          <td data-label="Device">{{ o.name or "—" }}</td>
+          <td data-label="MAC" class="mono"><a href="/devices/{{ o.mac }}">{{ o.mac }}</a></td>
+          <td data-label="Domain" class="mono">{{ o.domain }}</td>
+          <td data-label="Queries / window" class="num nowrap">
+            {{ o.count }} / {{ o.threshold }}
+            {%- if o.count > o.threshold %} <span class="badge badge-quarantine">over</span>
+            {%- else %} <span class="badge badge-evaluating">near</span>{% endif -%}
+          </td>
+          <td data-label="Since" class="muted nowrap" title="{{ o.over_since | int if o.over_since else '' }}">{% if o.over_since %}{{ o.over_since | fmt_ts }}{% else %}—{% endif %}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="empty">No clients are approaching the DNS-thrash threshold right now.</p>
+  {% endif %}
+</div>
+
+<div class="card" style="margin-top:1.5rem">
+  <div class="card-head">
+    <h2>DNS-triggered kicks</h2>
+    <span class="card-note">kicks attributed to <code>dns_thrash</code></span>
+  </div>
+  {% if kicks %}
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>When (UTC)</th><th>Device</th><th>MAC</th><th>Mechanism</th><th>Trigger</th></tr>
+      </thead>
+      <tbody>
+        {% for k in kicks %}
+        <tr class="{{ 'dry' if k.dry_run else '' }}">
+          <td data-label="When (UTC)" class="muted nowrap" title="{{ k.ts | int }}">{{ k.ts | fmt_ts }}</td>
+          <td data-label="Device">{{ k.name or "—" }}</td>
+          <td data-label="MAC" class="mono"><a href="/devices/{{ k.mac }}">{{ k.mac }}</a></td>
+          <td data-label="Mechanism">{% if k.mechanism %}<span class="badge badge-neutral">{{ k.mechanism }}</span>{% endif %}</td>
+          <td data-label="Trigger"><span class="badge badge-neutral">dns_thrash</span></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="empty">No DNS-triggered kicks recorded.</p>
+  {% endif %}
+</div>
+{% endblock %}

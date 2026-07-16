@@ -28,7 +28,25 @@ CREATE TABLE kick_events (
     dry_run INTEGER NOT NULL DEFAULT 0,
     mechanism TEXT NOT NULL DEFAULT 'deauth',
     target_bssid TEXT,
-    attempt_group TEXT
+    attempt_group TEXT,
+    trigger TEXT NOT NULL DEFAULT 'rf'
+);
+CREATE TABLE dns_source_samples (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts REAL NOT NULL,
+    source_name TEXT NOT NULL,
+    ok INTEGER NOT NULL DEFAULT 0,
+    query_count INTEGER NOT NULL DEFAULT 0,
+    error TEXT
+);
+CREATE TABLE dns_thrash_observations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts REAL NOT NULL,
+    mac TEXT NOT NULL,
+    domain TEXT NOT NULL,
+    query_count INTEGER NOT NULL,
+    threshold INTEGER NOT NULL,
+    over_since REAL
 );
 CREATE TABLE ap_samples (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

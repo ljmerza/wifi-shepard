@@ -147,6 +147,14 @@ class MergedDnsSource:
 
     def __init__(self, sources: list[DnsSource]) -> None:
         self._sources = list(sources)
+        # ADR-0012: per-instance outcome of the most recent queries_since, so the
+        # scanner can persist a per-poll health heartbeat (name/ok/query_count/error)
+        # even when nothing is flagged. Empty until the first poll.
+        self._last_poll_status: list[dict[str, Any]] = []
+
+    def last_poll_status(self) -> list[dict[str, Any]]:
+        """Per-instance outcome of the last ``queries_since`` (ADR-0012)."""
+        return list(self._last_poll_status)
 
     async def login(self) -> None:
         # Tolerate a down instance at startup: one Pi-hole being unreachable must not
@@ -165,13 +173,16 @@ class MergedDnsSource:
             return_exceptions=True,
         )
         merged: list[DnsQuery] = []
+        status: list[dict[str, Any]] = []
         for source, result in zip(self._sources, results, strict=True):
+            name = getattr(source, "name", "?")
             if isinstance(result, BaseException):
-                logger.warning(
-                    "dns_source_unavailable", extra={"source": getattr(source, "name", "?")}
-                )
+                logger.warning("dns_source_unavailable", extra={"source": name})
+                status.append({"name": name, "ok": False, "query_count": 0, "error": str(result)})
                 continue
             merged.extend(result)
+            status.append({"name": name, "ok": True, "query_count": len(result), "error": None})
+        self._last_poll_status = status
         return merged
 
     async def close(self) -> None:

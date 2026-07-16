@@ -29,6 +29,7 @@ class Store(Protocol):
         mechanism: str = "deauth",
         target_bssid: str | None = None,
         attempt_group: str | None = None,
+        trigger: str = "rf",
     ) -> None: ...
 
     async def insert_reboot(
@@ -40,6 +41,17 @@ class Store(Protocol):
         target: str | None,
         dry_run: bool,
     ) -> None: ...
+
+    async def insert_dns_source_sample(
+        self,
+        *,
+        source_name: str,
+        ok: bool,
+        query_count: int,
+        error: str | None = None,
+    ) -> None: ...
+
+    async def insert_dns_thrash_observations(self, rows: list[dict[str, Any]]) -> None: ...
 
     async def recent_kick_timestamps(self, mac: str, *, since: float) -> list[float]: ...
 
@@ -96,9 +108,42 @@ CREATE TABLE IF NOT EXISTS kick_events (
     dry_run INTEGER NOT NULL DEFAULT 0,
     mechanism TEXT NOT NULL DEFAULT 'deauth',
     target_bssid TEXT,
-    attempt_group TEXT
+    attempt_group TEXT,
+    trigger TEXT NOT NULL DEFAULT 'rf'
 );
 """
+
+# ADR-0012: DNS observability. dns_source_samples is a per-poll heartbeat (one row
+# per Pi-hole instance per cycle) proving the source authenticated and polled;
+# dns_thrash_observations snapshots the detector's near-threshold standings so the
+# UI can show who is approaching the limit before a kick. Both are display-only —
+# neither feeds detection — and both are pruned to a rolling window on write.
+SCHEMA_DNS_SOURCE_SAMPLES = """
+CREATE TABLE IF NOT EXISTS dns_source_samples (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts REAL NOT NULL,
+    source_name TEXT NOT NULL,
+    ok INTEGER NOT NULL DEFAULT 0,
+    query_count INTEGER NOT NULL DEFAULT 0,
+    error TEXT
+);
+"""
+
+SCHEMA_DNS_THRASH_OBSERVATIONS = """
+CREATE TABLE IF NOT EXISTS dns_thrash_observations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts REAL NOT NULL,
+    mac TEXT NOT NULL,
+    domain TEXT NOT NULL,
+    query_count INTEGER NOT NULL,
+    threshold INTEGER NOT NULL,
+    over_since REAL
+);
+"""
+
+# ADR-0012: observability tables are pruned to a rolling window on write so they
+# stay observability-sized rather than unbounded like client_samples.
+_DNS_RETENTION_SECONDS = 7 * 86400
 
 # ADR-0006: audit trail for every reboot (and every would_reboot). mode is
 # 'proactive' | 'reactive'; outcome is 'fired' | 'dry_run'. target is the
@@ -122,6 +167,9 @@ _KICK_EVENTS_MIGRATIONS = (
     ("mechanism", "ALTER TABLE kick_events ADD COLUMN mechanism TEXT NOT NULL DEFAULT 'deauth'"),
     ("target_bssid", "ALTER TABLE kick_events ADD COLUMN target_bssid TEXT"),
     ("attempt_group", "ALTER TABLE kick_events ADD COLUMN attempt_group TEXT"),
+    # ADR-0012: attribute each kick. Existing rows predate DNS/inactivity kicks and
+    # were all RF deauths, so backfilling to 'rf' is accurate for the live ledger.
+    ("trigger", "ALTER TABLE kick_events ADD COLUMN trigger TEXT NOT NULL DEFAULT 'rf'"),
 )
 
 # Forward-compatible migration: a client_samples table created before the UI
@@ -149,6 +197,8 @@ class Database:
         await self._conn.execute(SCHEMA_REBOOT_EVENTS)
         await self._conn.execute(SCHEMA_AP_SAMPLES)
         await self._conn.execute(SCHEMA_AP_RADIO_SAMPLES)
+        await self._conn.execute(SCHEMA_DNS_SOURCE_SAMPLES)
+        await self._conn.execute(SCHEMA_DNS_THRASH_OBSERVATIONS)
         await self._migrate_kick_events()
         await self._migrate_client_samples()
         await self._conn.commit()
@@ -223,14 +273,23 @@ class Database:
         mechanism: str = "deauth",
         target_bssid: str | None = None,
         attempt_group: str | None = None,
+        trigger: str = "rf",
     ) -> None:
         if self._conn is None:
             raise RuntimeError("Database.connect() must be called before insert_kick()")
         await self._conn.execute(
             "INSERT INTO kick_events "
-            "(ts, mac, dry_run, mechanism, target_bssid, attempt_group) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (time.time(), mac, 1 if dry_run else 0, mechanism, target_bssid, attempt_group),
+            "(ts, mac, dry_run, mechanism, target_bssid, attempt_group, trigger) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (
+                time.time(),
+                mac,
+                1 if dry_run else 0,
+                mechanism,
+                target_bssid,
+                attempt_group,
+                trigger,
+            ),
         )
         await self._conn.commit()
 
@@ -249,6 +308,61 @@ class Database:
             "INSERT INTO reboot_events (ts, mac, mode, outcome, target, dry_run) "
             "VALUES (?, ?, ?, ?, ?, ?)",
             (time.time(), mac, mode, outcome, target, 1 if dry_run else 0),
+        )
+        await self._conn.commit()
+
+    async def insert_dns_source_sample(
+        self,
+        *,
+        source_name: str,
+        ok: bool,
+        query_count: int,
+        error: str | None = None,
+    ) -> None:
+        """Persist one per-poll DNS-source heartbeat (ADR-0012), pruning old rows."""
+        if self._conn is None:
+            raise RuntimeError("connect() must be called before insert_dns_source_sample()")
+        now = time.time()
+        await self._conn.execute(
+            "INSERT INTO dns_source_samples (ts, source_name, ok, query_count, error) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (now, source_name, 1 if ok else 0, int(query_count), error),
+        )
+        await self._conn.execute(
+            "DELETE FROM dns_source_samples WHERE ts < ?", (now - _DNS_RETENTION_SECONDS,)
+        )
+        await self._conn.commit()
+
+    async def insert_dns_thrash_observations(self, rows: list[dict[str, Any]]) -> None:
+        """Persist a batch of near-threshold standings (ADR-0012), pruning old rows.
+
+        Each row is a dict with mac/domain/count/threshold/over_since (the detector's
+        ``standings()`` shape). A no-op on an empty batch — a quiet poll writes nothing.
+        """
+        if self._conn is None:
+            raise RuntimeError(
+                "Database.connect() must be called before insert_dns_thrash_observations()"
+            )
+        if not rows:
+            return
+        now = time.time()
+        await self._conn.executemany(
+            "INSERT INTO dns_thrash_observations "
+            "(ts, mac, domain, query_count, threshold, over_since) VALUES (?, ?, ?, ?, ?, ?)",
+            [
+                (
+                    now,
+                    r["mac"],
+                    r["domain"],
+                    int(r["count"]),
+                    int(r["threshold"]),
+                    r.get("over_since"),
+                )
+                for r in rows
+            ],
+        )
+        await self._conn.execute(
+            "DELETE FROM dns_thrash_observations WHERE ts < ?", (now - _DNS_RETENTION_SECONDS,)
         )
         await self._conn.commit()
 
