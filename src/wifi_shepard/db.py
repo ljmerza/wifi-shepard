@@ -56,7 +56,9 @@ CREATE TABLE IF NOT EXISTS client_samples (
     radio TEXT,
     ap_id TEXT,
     ap_cu_total INTEGER,
-    name TEXT
+    name TEXT,
+    tx_bytes INTEGER,
+    rx_bytes INTEGER
 );
 """
 
@@ -123,8 +125,14 @@ _KICK_EVENTS_MIGRATIONS = (
 )
 
 # Forward-compatible migration: a client_samples table created before the UI
-# device-name feature has no `name` column. Existing rows backfill to NULL.
-_CLIENT_SAMPLES_MIGRATIONS = (("name", "ALTER TABLE client_samples ADD COLUMN name TEXT"),)
+# device-name feature has no `name` column; one created before ADR-0010 has no
+# tx_bytes/rx_bytes byte counters. Each ALTER adds one missing column; existing
+# rows backfill to NULL.
+_CLIENT_SAMPLES_MIGRATIONS = (
+    ("name", "ALTER TABLE client_samples ADD COLUMN name TEXT"),
+    ("tx_bytes", "ALTER TABLE client_samples ADD COLUMN tx_bytes INTEGER"),
+    ("rx_bytes", "ALTER TABLE client_samples ADD COLUMN rx_bytes INTEGER"),
+)
 
 
 class Database:
@@ -169,8 +177,8 @@ class Database:
         await self._conn.execute(
             "INSERT INTO client_samples "
             "(ts, mac, signal, tx_rate_kbps, tx_retries, "
-            " wifi_tx_attempts, radio, ap_id, ap_cu_total, name) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            " wifi_tx_attempts, radio, ap_id, ap_cu_total, name, tx_bytes, rx_bytes) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 time.time(),
                 client.mac,
@@ -182,6 +190,8 @@ class Database:
                 client.ap_id,
                 client.ap_cu_total,
                 getattr(client, "name", None),
+                getattr(client, "tx_bytes", None),
+                getattr(client, "rx_bytes", None),
             ),
         )
         await self._conn.commit()

@@ -107,6 +107,8 @@ def make_client(
     ap_id: str = "ap1",
     ap_cu_total: int = 70,
     name: str | None = None,
+    tx_bytes: int | None = None,
+    rx_bytes: int | None = None,
 ) -> SimpleNamespace:
     return SimpleNamespace(
         mac=mac,
@@ -118,6 +120,8 @@ def make_client(
         ap_id=ap_id,
         ap_cu_total=ap_cu_total,
         name=name,
+        tx_bytes=tx_bytes,
+        rx_bytes=rx_bytes,
     )
 
 

@@ -177,6 +177,20 @@ def _require_mapping_items(items: list[Any], key: str) -> list[Mapping[str, Any]
 
 
 @dataclass(frozen=True)
+class InactivityConfig:
+    # ADR-0010: "associated but no traffic" detector. An INDEPENDENT detection
+    # class, not a fourth conjunctive client criterion — it flags an opted-in MAC
+    # whose byte counters flatline over a window, catching a strong-signal client
+    # whose application session is wedged (the failure the conjunctive scorer can
+    # never see). Explicit per-MAC opt-in only (no baseline learning in v1);
+    # `enabled: true` with an empty `macs` list is legal but inert.
+    enabled: bool = False
+    min_bytes_per_window: int = 1024
+    window_samples: int = 30
+    macs: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class DetectionConfig:
     # ADR-0009: each client criterion is disable-able. `None` (YAML `null`) turns
     # that signal off; omitting the key keeps the active default. At least one of
@@ -188,6 +202,8 @@ class DetectionConfig:
     # channel utilization); shipped configs set 60. Per-MAC overridable.
     ap_cu_total_min: int = 0
     radios: tuple[str, ...] = ("ng",)
+    # ADR-0010: independent traffic-inactivity detector (opt-in, default-off).
+    inactivity: InactivityConfig = field(default_factory=InactivityConfig)
 
 
 @dataclass(frozen=True)
@@ -569,6 +585,43 @@ def _build_reboot_reactive(raw: Mapping[str, Any] | None) -> RebootReactiveConfi
     )
 
 
+def _build_inactivity(raw: Mapping[str, Any] | None) -> InactivityConfig:
+    """Parse + validate the detection.inactivity: block (ADR-0010). None → defaults (off).
+
+    Fail-closed in the config.py house style: a non-bool ``enabled``, a negative /
+    non-int threshold, ``window_samples < 1`` while enabled, or a malformed MAC all
+    raise at parse time. Each MAC is canonicalized (strip + lowercase) via
+    ``_require_mac`` so the opt-in set matches the controller's inconsistent casing.
+    ``enabled: true`` with an empty ``macs`` list is legal but inert.
+    """
+    if raw is None:
+        return InactivityConfig()
+    if not isinstance(raw, Mapping):
+        raise ValueError(f"detection.inactivity must be a YAML mapping, got {_describe(raw)}")
+    enabled = _require_bool(raw.get("enabled", False), "detection.inactivity.enabled")
+    min_bytes_per_window = _require_non_negative_int(
+        raw.get("min_bytes_per_window", 1024), "detection.inactivity.min_bytes_per_window"
+    )
+    window_samples = _require_non_negative_int(
+        raw.get("window_samples", 30), "detection.inactivity.window_samples"
+    )
+    if enabled and window_samples < 1:
+        raise ValueError(
+            "detection.inactivity.window_samples must be >= 1 when inactivity detection is "
+            f"enabled (an empty window can never accumulate a delta); got {window_samples!r}"
+        )
+    mac_items = _require_sequence(raw.get("macs"), "detection.inactivity.macs")
+    macs = tuple(
+        _require_mac(m, f"detection.inactivity.macs[{i}]") for i, m in enumerate(mac_items)
+    )
+    return InactivityConfig(
+        enabled=enabled,
+        min_bytes_per_window=min_bytes_per_window,
+        window_samples=window_samples,
+        macs=macs,
+    )
+
+
 _QUIET_HOURS_THRESHOLD_FIELDS: frozenset[str] = frozenset(
     {"tx_rate_kbps_max", "retry_pct_max", "signal_dbm_max"}
 )
@@ -646,6 +699,7 @@ def build_config(
     signal_dbm_max: int | None = -70,
     ap_cu_total_min: int = 0,
     radios: tuple[str, ...] = ("ng",),
+    inactivity: Mapping[str, Any] | None = None,
     dry_run: bool = True,
     window_samples: int = 5,
     poll_interval_seconds: int = 60,
@@ -673,6 +727,7 @@ def build_config(
         signal_dbm_max=signal_dbm_max,
         ap_cu_total_min=_require_non_negative_int(ap_cu_total_min, "detection.ap_cu_total_min"),
         radios=tuple(radios),
+        inactivity=_build_inactivity(inactivity),
     )
     # ADR-0009: at least one client criterion must stay enabled — an all-null trio
     # would make every saturated client "bad" (the scorer fails safe, but reject it
@@ -752,6 +807,14 @@ def build_config(
     for override in reboot_cfg.overrides:
         if override.mac.strip().lower() not in eligible_norm:
             logger.warning("reboot_override_mac_not_eligible", extra={"mac": override.mac})
+    # ADR-0010: an inactivity-opted-in MAC that is also allowlisted is a
+    # contradiction the operator should see at load time. The allowlist wins
+    # (the InactivityScorer skips allowlisted MACs regardless); this warning
+    # mirrors reboot_eligible_in_allowlist. inactivity.macs are already
+    # canonicalized, matching allowlist_norm's form.
+    for mac in detection.inactivity.macs:
+        if mac in allowlist_norm:
+            logger.warning("inactivity_mac_in_allowlist", extra={"mac": mac})
     return Config(
         detection=detection,
         scanner=scanner,
@@ -815,6 +878,8 @@ def load_config_from_path(path: Path | str) -> Config:
         # _require_non_negative_int fail-closes on a non-int/negative (ADR-0008 AC-6).
         ap_cu_total_min=detection_data.get("ap_cu_total_min", 0),
         radios=radios,
+        # None (no block) → InactivityConfig defaults (off); _build_inactivity validates.
+        inactivity=detection_data.get("inactivity"),
         quarantine_after_kicks=int(backoff_data.get("quarantine_after_kicks", 5)),
         cooldowns_seconds=_require_sequence(
             backoff_data.get("cooldowns_seconds"), "backoff.cooldowns_seconds"

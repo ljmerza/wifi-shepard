@@ -15,6 +15,12 @@ class ClientSnapshot:
     ap_id: str
     ap_cu_total: int
     name: str | None = None
+    # ADR-0010: cumulative per-client byte counters, used by the traffic-inactivity
+    # detector to spot an associated-but-flatlined client. Fail-soft (unlike the
+    # detection-critical fields above): ``None`` when the backend doesn't report
+    # them, so their absence never breaks scanning or the conjunctive scorer.
+    tx_bytes: int | None = None
+    rx_bytes: int | None = None
 
 
 @dataclass(frozen=True)
