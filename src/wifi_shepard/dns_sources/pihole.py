@@ -178,14 +178,10 @@ class MergedDnsSource:
             name = getattr(source, "name", "?")
             if isinstance(result, BaseException):
                 logger.warning("dns_source_unavailable", extra={"source": name})
-                status.append(
-                    {"name": name, "ok": False, "query_count": 0, "error": str(result)}
-                )
+                status.append({"name": name, "ok": False, "query_count": 0, "error": str(result)})
                 continue
             merged.extend(result)
-            status.append(
-                {"name": name, "ok": True, "query_count": len(result), "error": None}
-            )
+            status.append({"name": name, "ok": True, "query_count": len(result), "error": None})
         self._last_poll_status = status
         return merged
 
