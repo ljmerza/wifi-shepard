@@ -64,4 +64,10 @@ def test_ac_7_dns_page_shows_health_thrashers_and_kicks(make_db) -> None:
     assert "17" in text and "20" in text, "the count/threshold (17/20) must render"
 
     # DNS-triggered kicks — the trigger surfaces so DNS kicks are attributable.
-    assert "dns_thrash" in lower or "dns thrash" in lower, "DNS-triggered kicks must surface"
+    # Not tautological: the static card-note already contains "dns_thrash", so require
+    # the kick ROW to render too. Its mechanism badge ('deauth') appears only when
+    # dns_thrash_kicks() actually returns the seeded row — a stub returning [] fails.
+    assert "deauth" in lower, "the DNS-triggered kick row (mechanism 'deauth') must render"
+    assert lower.count("dns_thrash") >= 2, (
+        "the kicks table must render at least one dns_thrash row beyond the static note"
+    )

@@ -86,6 +86,9 @@ class DnsThrashDetector:
             # The additive signal must never break the scan loop (ADR-0011 AC-10).
             logger.warning("dns_source_unavailable")
             self._last_poll_ts = now
+            # ADR-0012: clear standings too, so a source outage doesn't re-persist
+            # the previous poll's contenders under a fresh ts (phantom "current" rows).
+            self._last_standings = []
             return []
         self._last_poll_ts = now
 
