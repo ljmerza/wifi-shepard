@@ -488,15 +488,31 @@ def dns_near_threshold(conn: sqlite3.Connection) -> list[DnsObservation]:
 
     Reads only the newest snapshot (max ts) so the table shows current contenders,
     not historical ones. Empty list when the table is absent.
+
+    Freshness gate: the scanner writes observation rows only when a poll has
+    contenders, but writes a source-health heartbeat *every* poll. So if the
+    newest heartbeat is more recent than the newest observation, the current poll
+    had zero contenders and the latest observations are stale — return [] rather
+    than presenting a days-old snapshot as "current."
     """
     try:
-        rows = conn.execute(
-            "SELECT mac, domain, query_count, threshold, over_since "
-            "FROM dns_thrash_observations "
-            "WHERE ts = (SELECT MAX(ts) FROM dns_thrash_observations)"
-        ).fetchall()
+        (max_obs_ts,) = conn.execute("SELECT MAX(ts) FROM dns_thrash_observations").fetchone()
     except sqlite3.OperationalError:
         return []
+    if max_obs_ts is None:
+        return []
+    try:
+        (max_health_ts,) = conn.execute("SELECT MAX(ts) FROM dns_source_samples").fetchone()
+    except sqlite3.OperationalError:
+        max_health_ts = None
+    if max_health_ts is not None and max_obs_ts < max_health_ts:
+        return []
+
+    rows = conn.execute(
+        "SELECT mac, domain, query_count, threshold, over_since "
+        "FROM dns_thrash_observations WHERE ts = ?",
+        (max_obs_ts,),
+    ).fetchall()
 
     names = _latest_client_names(conn)
     obs = [
