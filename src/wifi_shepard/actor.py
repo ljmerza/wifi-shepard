@@ -78,6 +78,10 @@ class Actor:
         # lockstep, which is a foot-gun the compiler can't catch.
         resolved_mechanism = resolve_kick_mechanism(mac, self.config)
         sent_mechanism = _dispatch_mechanism(resolved_mechanism)
+        # ADR-0012: attribute the kick to the signal that raised it. The scorer's
+        # decision dict carries no 'trigger', so an RF flag defaults to 'rf';
+        # inactivity/dns paths tag their dict explicitly.
+        trigger = thresholds.get("trigger", "rf")
 
         if self.config.scanner.dry_run:
             logger.info(
@@ -134,6 +138,7 @@ class Actor:
                 dry_run=False,
                 mechanism="deauth_fallback",
                 attempt_group=pending["group"],
+                trigger=trigger,
             )
             self.pending.set_outcome(
                 mac,
@@ -216,6 +221,7 @@ class Actor:
             dry_run=False,
             mechanism=sent_mechanism,
             attempt_group=attempt_group,
+            trigger=trigger,
         )
         self.pending.set_outcome(
             mac,
