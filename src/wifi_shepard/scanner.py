@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import math
 from typing import TYPE_CHECKING, Any
 
@@ -15,6 +16,8 @@ if TYPE_CHECKING:
     from .dns_thrash import DnsThrashDetector
     from .rate_limit import KickRateLimiter
     from .scorer import Scorer
+
+logger = logging.getLogger("wifi_shepard.scanner")
 
 # ADR-0012: cap how many near-threshold contenders are persisted per poll so a
 # noisy cycle can't write an unbounded batch of observation rows.
@@ -120,8 +123,12 @@ class Scanner:
             return
         flagged = await detector.observe(clients)
         # ADR-0012: persist observability every cycle — even when nothing is flagged,
-        # so the UI can prove the source authenticated and polled.
-        await self._persist_dns_observability(detector)
+        # so the UI can prove the source authenticated and polled. Fail-soft: a write
+        # error here must never break the scan loop or the RF remediation path below.
+        try:
+            await self._persist_dns_observability(detector)
+        except Exception:
+            logger.warning("dns_observability_persist_failed")
         if not flagged:
             return
         client_by_mac = {client.mac: client for client in clients}
