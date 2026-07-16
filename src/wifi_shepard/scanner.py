@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from typing import TYPE_CHECKING, Any
 
 from .controllers.base import Controller
@@ -14,6 +15,10 @@ if TYPE_CHECKING:
     from .dns_thrash import DnsThrashDetector
     from .rate_limit import KickRateLimiter
     from .scorer import Scorer
+
+# ADR-0012: cap how many near-threshold contenders are persisted per poll so a
+# noisy cycle can't write an unbounded batch of observation rows.
+_DNS_OBSERVATION_TOP_N = 20
 
 
 class Scanner:
@@ -144,3 +149,12 @@ class Scanner:
                     query_count=st["query_count"],
                     error=st.get("error"),
                 )
+        # Persist only contenders (count >= half the threshold), top-N capped, so
+        # quiet domains don't flood the table.
+        standings = detector.standings() if hasattr(detector, "standings") else []
+        contenders = [
+            s for s in standings if s["count"] >= math.ceil(0.5 * s["threshold"])
+        ]
+        contenders.sort(key=lambda s: s["count"], reverse=True)
+        if contenders:
+            await self.db.insert_dns_thrash_observations(contenders[:_DNS_OBSERVATION_TOP_N])
