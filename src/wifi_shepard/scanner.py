@@ -6,10 +6,12 @@ from .controllers.base import Controller
 from .db import Store
 from .notify import Notifier
 from .pipeline import DetectionPipeline, build_pipeline
+from .reboot import normalize_mac
 
 if TYPE_CHECKING:
     from .actor import Actor
     from .backoff import BackoffManager
+    from .dns_thrash import DnsThrashDetector
     from .rate_limit import KickRateLimiter
     from .scorer import Scorer
 
@@ -35,6 +37,7 @@ class Scanner:
         config: Any | None = None,
         ha: Notifier | None = None,
         pipeline: DetectionPipeline | None = None,
+        dns_detector: DnsThrashDetector | None = None,
     ) -> None:
         self.controller = controller
         self.db = db
@@ -43,6 +46,9 @@ class Scanner:
         if pipeline is None and config is not None:
             pipeline = build_pipeline(config, controller=controller, db=db, ha=ha)
         self._pipeline = pipeline
+        # ADR-0011: optional DNS-thrash detector (built at the composition root when
+        # the feature is configured). None = feature off; the scan loop is unchanged.
+        self._dns_detector = dns_detector
 
     # Read accessors for the live collaborators. Callers (tests, embedders) reach
     # for scanner.actor / .backoff / .scorer / .rate_limiter; the pipeline holds
@@ -68,6 +74,10 @@ class Scanner:
         self.poll_interval_seconds = config.scanner.poll_interval_seconds
         if self._pipeline is not None:
             self._pipeline.update_config(config)
+        # ADR-0011: SIGHUP retune of the DNS-thrash thresholds in place (source
+        # URL/password changes still require a restart — see ADR-0011).
+        if self._dns_detector is not None:
+            self._dns_detector.update_config(config)
 
     async def run_once(self) -> None:
         clients = await self.controller.list_wireless_clients()
@@ -88,7 +98,34 @@ class Scanner:
             if inactivity_decision is not None:
                 await pipeline.actor.handle(client, inactivity_decision)
 
+        # ADR-0011: DNS-thrash detection is an additive signal. A flagged MAC routes
+        # through the *same* Actor.handle as a scorer flag, so dry-run, backoff, caps,
+        # rate limits, and HA notification all apply unchanged.
+        await self._run_dns_thrash(clients)
+
         # Persist AP-level health (identity + CPU/mem + per-radio CU) for the
         # read-only UI's "noisy APs" view. Display-only — never feeds detection.
         for ap in await self.controller.list_ap_stats():
             await self.db.insert_ap_stats(ap)
+
+    async def _run_dns_thrash(self, clients: list[Any]) -> None:
+        detector = self._dns_detector
+        pipeline = self._pipeline
+        if detector is None or pipeline is None:
+            return
+        flagged = await detector.observe(clients)
+        if not flagged:
+            return
+        client_by_mac = {client.mac: client for client in clients}
+        allowlist = self.config.allowlist if self.config is not None else ()
+        for mac in flagged:
+            # The allowlist is the primary safety control; a flagged-but-allowlisted
+            # MAC is never kicked (compared canonically, like the scorer does).
+            if normalize_mac(mac) in allowlist:
+                continue
+            client = client_by_mac.get(mac)
+            if client is None:
+                # Flagged from accumulated history but not present this cycle
+                # (disconnected) — nothing to kick.
+                continue
+            await pipeline.actor.handle(client, {"trigger": "dns_thrash"})

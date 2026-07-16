@@ -40,6 +40,10 @@ _VALID_REBOOT_RESOLVERS: frozenset[str] = frozenset({"home_assistant"})
 _VALID_PROBE_METHODS: frozenset[str] = frozenset({"ping", "http"})
 _SCHEDULE_PATTERN = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
 
+# ADR-0011: the DNS data-source backend is a closed set so an unknown `type:` fails
+# closed at parse time rather than silently arming a detection with no data source.
+_VALID_DNS_SOURCE_TYPES: frozenset[str] = frozenset({"pihole"})
+
 _MAC_PATTERN = re.compile(r"^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$")
 
 
@@ -191,6 +195,16 @@ class InactivityConfig:
 
 
 @dataclass(frozen=True)
+class DnsThrashConfig:
+    # ADR-0011: DNS-thrash detection tunables. A MAC resolving one domain more than
+    # `same_domain_queries_max` times within `window_minutes`, sustained continuously
+    # for `sustain_windows * window_minutes`, is flagged. Absent block → feature off.
+    same_domain_queries_max: int = 20
+    window_minutes: int = 60
+    sustain_windows: int = 2
+
+
+@dataclass(frozen=True)
 class DetectionConfig:
     # ADR-0009: each client criterion is disable-able. `None` (YAML `null`) turns
     # that signal off; omitting the key keeps the active default. At least one of
@@ -204,6 +218,8 @@ class DetectionConfig:
     radios: tuple[str, ...] = ("ng",)
     # ADR-0010: independent traffic-inactivity detector (opt-in, default-off).
     inactivity: InactivityConfig = field(default_factory=InactivityConfig)
+    # ADR-0011: optional DNS-thrash detection. None (no `dns_thrash:` block) = off.
+    dns_thrash: DnsThrashConfig | None = None
 
 
 @dataclass(frozen=True)
@@ -260,6 +276,8 @@ class OverrideEntry:
     # ADR-0007: per-MAC kick-cap overrides (override > global). None = inherit.
     max_kicks_per_hour: int | None = None
     max_kicks_per_day: int | None = None
+    # ADR-0011: per-MAC DNS-thrash threshold (override > global). None = inherit.
+    dns_same_domain_queries_max: int | None = None
 
 
 @dataclass(frozen=True)
@@ -337,6 +355,22 @@ class ControllerSpec:
 
 
 @dataclass(frozen=True)
+class DnsInstanceSpec:
+    # ADR-0011: one Pi-hole instance. Clients may use either of two resolvers, so a
+    # source lists several instances and the merged source concatenates them.
+    url: str
+
+
+@dataclass(frozen=True)
+class DnsSourceSpec:
+    # ADR-0011: an optional DNS data source (Pi-hole v6 first). password is
+    # repr-suppressed for the same reason as ControllerSpec.password.
+    type: str
+    password: str = field(repr=False)
+    instances: tuple[DnsInstanceSpec, ...] = ()
+
+
+@dataclass(frozen=True)
 class HomeAssistantConfig:
     # PLAN.md §1/§4: per-kick / per-quarantine notifications via HA's REST
     # notify service. token is repr-suppressed for the same reason as
@@ -358,6 +392,8 @@ class Config:
     allowlist: tuple[str, ...] = ()
     controllers: tuple[ControllerSpec, ...] = ()
     home_assistant: HomeAssistantConfig | None = None
+    # ADR-0011: optional DNS data sources (empty = feature off).
+    dns_sources: tuple[DnsSourceSpec, ...] = ()
 
 
 _CONTROLLER_REQUIRED = ("type", "name", "host", "username", "password")
@@ -409,6 +445,81 @@ def _build_home_assistant(raw: Mapping[str, Any] | None) -> HomeAssistantConfig 
         token=raw["token"],
         notify_service=raw["notify_service"],
     )
+
+
+def _build_dns_thrash(raw: Mapping[str, Any] | None) -> DnsThrashConfig | None:
+    """Parse + validate the detection.dns_thrash: block (ADR-0011). None (no block)
+    → feature off. Fail-closed: all three knobs non-negative, and window/sustain must
+    be >= 1 when the block is present (a zero-length window can never trip)."""
+    if raw is None:
+        return None
+    if not isinstance(raw, Mapping):
+        raise ValueError(f"detection.dns_thrash must be a YAML mapping, got {_describe(raw)}")
+    same_domain_queries_max = _require_non_negative_int(
+        raw.get("same_domain_queries_max", 20), "detection.dns_thrash.same_domain_queries_max"
+    )
+    window_minutes = _require_non_negative_int(
+        raw.get("window_minutes", 60), "detection.dns_thrash.window_minutes"
+    )
+    sustain_windows = _require_non_negative_int(
+        raw.get("sustain_windows", 2), "detection.dns_thrash.sustain_windows"
+    )
+    if window_minutes < 1:
+        raise ValueError("detection.dns_thrash.window_minutes must be >= 1")
+    if sustain_windows < 1:
+        raise ValueError("detection.dns_thrash.sustain_windows must be >= 1")
+    return DnsThrashConfig(
+        same_domain_queries_max=same_domain_queries_max,
+        window_minutes=window_minutes,
+        sustain_windows=sustain_windows,
+    )
+
+
+def _build_dns_sources(raw: Any) -> tuple[DnsSourceSpec, ...]:
+    """Parse + validate the top-level dns_sources: list (ADR-0011). Fail-closed:
+    unknown type, missing/empty password, or a bad instance url all raise at parse
+    time. Absent / empty → () (feature off)."""
+    items = _require_mapping_items(_require_sequence(raw, "dns_sources"), "dns_sources")
+    specs: list[DnsSourceSpec] = []
+    for i, item in enumerate(items):
+        source_type = item.get("type")
+        if source_type not in _VALID_DNS_SOURCE_TYPES:
+            raise ValueError(
+                f"dns_sources[{i}].type must be one of {sorted(_VALID_DNS_SOURCE_TYPES)}; "
+                f"got {source_type!r}"
+            )
+        password = item.get("password")
+        if not isinstance(password, str) or not password:
+            raise ValueError(
+                f"dns_sources[{i}].password is required and must be a non-empty string"
+            )
+        instance_items = _require_mapping_items(
+            _require_sequence(item.get("instances"), f"dns_sources[{i}].instances"),
+            f"dns_sources[{i}].instances",
+        )
+        if not instance_items:
+            raise ValueError(f"dns_sources[{i}].instances must list at least one instance")
+        instances: list[DnsInstanceSpec] = []
+        for j, inst in enumerate(instance_items):
+            url = inst.get("url")
+            if not isinstance(url, str) or not url:
+                raise ValueError(
+                    f"dns_sources[{i}].instances[{j}].url is required and must be non-empty"
+                )
+            if not url.startswith(("http://", "https://")):
+                raise ValueError(
+                    f"dns_sources[{i}].instances[{j}].url must start with http:// or https://; "
+                    f"got {url!r}"
+                )
+            instances.append(DnsInstanceSpec(url=url))
+        specs.append(
+            DnsSourceSpec(
+                type=str(source_type),
+                password=password,
+                instances=tuple(instances),
+            )
+        )
+    return tuple(specs)
 
 
 def _build_safety_rails(raw: Mapping[str, Any] | None) -> SafetyRailsConfig:
@@ -700,6 +811,7 @@ def build_config(
     ap_cu_total_min: int = 0,
     radios: tuple[str, ...] = ("ng",),
     inactivity: Mapping[str, Any] | None = None,
+    dns_thrash: Mapping[str, Any] | None = None,
     dry_run: bool = True,
     window_samples: int = 5,
     poll_interval_seconds: int = 60,
@@ -715,12 +827,14 @@ def build_config(
     allowlist: list[str] | tuple[str, ...] = (),
     controllers: list[dict[str, Any]] | tuple[dict[str, Any], ...] = (),
     home_assistant: Mapping[str, Any] | None = None,
+    dns_sources: Any = (),
 ) -> Config:
     if kick_mechanism not in _VALID_KICK_MECHANISMS:
         raise ValueError(
             f"kick_mechanism must be one of {sorted(_VALID_KICK_MECHANISMS)}; "
             f"got {kick_mechanism!r}"
         )
+    dns_thrash_cfg = _build_dns_thrash(dns_thrash)
     detection = DetectionConfig(
         tx_rate_kbps_max=tx_rate_kbps_max,
         retry_pct_max=retry_pct_max,
@@ -728,6 +842,7 @@ def build_config(
         ap_cu_total_min=_require_non_negative_int(ap_cu_total_min, "detection.ap_cu_total_min"),
         radios=tuple(radios),
         inactivity=_build_inactivity(inactivity),
+        dns_thrash=dns_thrash_cfg,
     )
     # ADR-0009: at least one client criterion must stay enabled — an all-null trio
     # would make every saturated client "bad" (the scorer fails safe, but reject it
@@ -776,11 +891,24 @@ def build_config(
             _require_non_negative_int(
                 entry.ap_cu_total_min, f"overrides[mac={entry.mac}].ap_cu_total_min"
             )
+        if entry.dns_same_domain_queries_max is not None:
+            _require_non_negative_int(
+                entry.dns_same_domain_queries_max,
+                f"overrides[mac={entry.mac}].dns_same_domain_queries_max",
+            )
     controllers_typed = tuple(_build_controller_spec(c, i) for i, c in enumerate(controllers))
     home_assistant_cfg = _build_home_assistant(home_assistant)
     safety_rails_cfg = _build_safety_rails(safety_rails)
     quiet_hours_cfg = _build_quiet_hours(quiet_hours)
     reboot_cfg = _build_reboot(reboot)
+    dns_sources_typed = _build_dns_sources(dns_sources)
+    # ADR-0011: a dns_thrash: block the operator believes is armed must not silently
+    # run with no data source — the UniFi controller cannot see per-client DNS.
+    if dns_thrash_cfg is not None and not dns_sources_typed:
+        raise ValueError(
+            "detection.dns_thrash is configured but no dns_sources are defined; add a "
+            "dns_sources: entry (e.g. a Pi-hole instance) or remove the dns_thrash block"
+        )
     # The allowlist is the daemon's primary safety control, so it is canonicalized once
     # here and every consumer compares against that one form. It used to be stored raw
     # and matched exactly, which meant an uppercase entry (the form printed on device
@@ -826,6 +954,7 @@ def build_config(
         allowlist=allowlist_typed,
         controllers=controllers_typed,
         home_assistant=home_assistant_cfg,
+        dns_sources=dns_sources_typed,
     )
 
 
@@ -880,6 +1009,9 @@ def load_config_from_path(path: Path | str) -> Config:
         radios=radios,
         # None (no block) → InactivityConfig defaults (off); _build_inactivity validates.
         inactivity=detection_data.get("inactivity"),
+        # ADR-0011: None (no `dns_thrash:` key) → feature off. Passed raw so
+        # _build_dns_thrash owns the fail-closed validation.
+        dns_thrash=detection_data.get("dns_thrash"),
         quarantine_after_kicks=int(backoff_data.get("quarantine_after_kicks", 5)),
         cooldowns_seconds=_require_sequence(
             backoff_data.get("cooldowns_seconds"), "backoff.cooldowns_seconds"
@@ -893,4 +1025,6 @@ def load_config_from_path(path: Path | str) -> Config:
         overrides=overrides,
         controllers=controllers,
         home_assistant=data.get("home_assistant"),
+        # ADR-0011: None/absent → () (feature off); _build_dns_sources validates.
+        dns_sources=data.get("dns_sources"),
     )
