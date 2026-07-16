@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import ssl
 from pathlib import Path
 
@@ -564,5 +565,101 @@ async def test_port_kwarg_is_used_in_request_url():
             # If port=8443 (or anything other than 9999) were used, aioresponses
             # would raise ConnectionError on the unstubbed URL.
             await controller.login()
+    finally:
+        await controller.close()
+
+
+@pytest.mark.asyncio
+async def test_statless_wireless_client_is_skipped_not_fatal(caplog):
+    from wifi_shepard.controllers import UniFiController
+
+    clients_fixture = _load_fixture("unifi_clients.json")
+    # Mirror of a live observation: a sleeping iDevice on a private MAC stays in
+    # /stat/sta with is_wired: false and none of its radio stat fields. One such
+    # entry must not abort the whole scan cycle.
+    clients_fixture["data"].append(
+        {"mac": "26:c1:84:25:2d:1e", "hostname": "iPad", "is_wired": False, "ip": "192.168.1.130"}
+    )
+    devices_fixture = _load_fixture("unifi_devices.json")
+
+    controller = UniFiController(
+        host=HOST,
+        username="shepard",
+        password="secret",
+        site="default",
+        verify_ssl=False,
+        port=PORT,
+    )
+    try:
+        with aioresponses() as m:
+            _stub_login(m)
+            m.get(
+                f"{BASE}{SITE_PREFIX}/stat/sta",
+                status=200,
+                content_type="application/json",
+                body=json.dumps(clients_fixture),
+                repeat=True,
+            )
+            m.get(
+                f"{BASE}{SITE_PREFIX}/stat/device",
+                status=200,
+                content_type="application/json",
+                body=json.dumps(devices_fixture),
+                repeat=True,
+            )
+            await controller.login()
+            with caplog.at_level(logging.WARNING, logger="wifi_shepard.controllers.unifi"):
+                first = await controller.list_wireless_clients()
+                second = await controller.list_wireless_clients()
+    finally:
+        await controller.close()
+
+    assert {s.mac for s in first} == {"aa:bb:cc:dd:ee:01", "aa:bb:cc:dd:ee:02"}
+    assert {s.mac for s in second} == {"aa:bb:cc:dd:ee:02", "aa:bb:cc:dd:ee:01"}
+    warnings = [r for r in caplog.records if r.msg == "client_snapshot_incomplete"]
+    assert len(warnings) == 1, "a persistently stat-less client warns once, not once per poll"
+    assert warnings[0].client == "26:c1:84:25:2d:1e"
+    assert "ap_mac" in warnings[0].missing
+
+
+@pytest.mark.asyncio
+async def test_wrong_typed_client_field_still_fails_closed():
+    from wifi_shepard.controllers import UniFiController
+    from wifi_shepard.controllers.unifi import UniFiSchemaError
+
+    clients_fixture = _load_fixture("unifi_clients.json")
+    for entry in clients_fixture["data"]:
+        if entry.get("mac") == "aa:bb:cc:dd:ee:01":
+            # Present but mistyped is schema drift, not a stat-less sleeper —
+            # the fail-closed posture must be unchanged for this case.
+            entry["ap_mac"] = 12345
+    devices_fixture = _load_fixture("unifi_devices.json")
+
+    controller = UniFiController(
+        host=HOST,
+        username="shepard",
+        password="secret",
+        site="default",
+        verify_ssl=False,
+        port=PORT,
+    )
+    try:
+        with aioresponses() as m:
+            _stub_login(m)
+            m.get(
+                f"{BASE}{SITE_PREFIX}/stat/sta",
+                status=200,
+                content_type="application/json",
+                body=json.dumps(clients_fixture),
+            )
+            m.get(
+                f"{BASE}{SITE_PREFIX}/stat/device",
+                status=200,
+                content_type="application/json",
+                body=json.dumps(devices_fixture),
+            )
+            await controller.login()
+            with pytest.raises(UniFiSchemaError):
+                await controller.list_wireless_clients()
     finally:
         await controller.close()
