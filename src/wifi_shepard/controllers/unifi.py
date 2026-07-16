@@ -163,6 +163,11 @@ class UniFiController:
             # Friendly label for the UI: operator-assigned `name` first, then the
             # device-reported `hostname`; None when neither is present.
             name = raw.get("name") or raw.get("hostname") or None
+            # ADR-0011: fail-soft IP for the DNS-thrash MAC<->IP join. Unlike the
+            # required fields above it is never _require'd — a missing/blank IP just
+            # means this client is invisible to the (optional) DNS signal.
+            raw_ip = raw.get("ip")
+            ip = raw_ip if isinstance(raw_ip, str) and raw_ip else None
             out.append(
                 ClientSnapshot(
                     mac=mac,
@@ -176,6 +181,7 @@ class UniFiController:
                     name=name,
                     tx_bytes=_optional_int(raw, "tx_bytes"),
                     rx_bytes=_optional_int(raw, "rx_bytes"),
+                    ip=ip,
                 )
             )
         return out

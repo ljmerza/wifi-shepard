@@ -435,6 +435,41 @@ async def test_list_wireless_clients_maps_name_from_raw():
 
 
 @pytest.mark.asyncio
+async def test_list_wireless_clients_maps_ip_fail_soft():
+    """ADR-0011: ClientSnapshot.ip is fail-soft (raw.get("ip")) — present when the
+    controller reports it, None when absent/blank. Never _require'd."""
+    from wifi_shepard.controllers import UniFiController
+
+    clients_fixture = _load_fixture("unifi_clients.json")
+    devices_fixture = _load_fixture("unifi_devices.json")
+
+    controller = UniFiController(host=HOST, username="shepard", password="secret", port=PORT)
+    try:
+        with aioresponses() as m:
+            _stub_login(m)
+            m.get(
+                f"{BASE}{SITE_PREFIX}/stat/sta",
+                status=200,
+                content_type="application/json",
+                body=json.dumps(clients_fixture),
+            )
+            m.get(
+                f"{BASE}{SITE_PREFIX}/stat/device",
+                status=200,
+                content_type="application/json",
+                body=json.dumps(devices_fixture),
+            )
+            await controller.login()
+            snapshots = await controller.list_wireless_clients()
+
+        by_mac = {s.mac: s for s in snapshots}
+        assert by_mac["aa:bb:cc:dd:ee:01"].ip == "192.168.1.50", "IP maps from raw.ip"
+        assert by_mac["aa:bb:cc:dd:ee:02"].ip is None, "absent raw.ip is fail-soft None"
+    finally:
+        await controller.close()
+
+
+@pytest.mark.asyncio
 async def test_list_ap_stats_maps_cpu_mem_and_per_radio_channel():
     from wifi_shepard.controllers import UniFiController
 

@@ -6,6 +6,7 @@
       "mac": "aa:bb:cc:dd:ee:01",
       "ap_mac": "ff:ee:dd:cc:bb:aa",
       "is_wired": false,
+      "ip": "192.168.1.50",
       "radio": "ng",
       "signal": -78,
       "tx_rate": 6000,

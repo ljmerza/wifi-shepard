@@ -57,6 +57,22 @@ def resolve_caps(mac: str, config: Any) -> tuple[int, int]:
     return max_hour, max_day
 
 
+def resolve_dns_same_domain_max(mac: str, config: Any) -> int:
+    """Per-MAC DNS-thrash threshold resolution (ADR-0011): override > global.
+
+    Returns the ``same_domain_queries_max`` in effect for ``mac`` — the per-MAC
+    ``dns_same_domain_queries_max`` override when set, else the global
+    ``detection.dns_thrash`` value. Only called when the feature is configured, so
+    ``config.detection.dns_thrash`` is non-None here.
+    """
+    for override in config.overrides:
+        if override.mac != mac:
+            continue
+        if getattr(override, "dns_same_domain_queries_max", None) is not None:
+            return override.dns_same_domain_queries_max
+    return config.detection.dns_thrash.same_domain_queries_max
+
+
 def _parse_hhmm(value: str) -> dt_time:
     hour, minute = value.split(":")
     return dt_time(int(hour), int(minute))

@@ -25,3 +25,4 @@
 | [0008](./0008-ap-saturation-gate.md) | AP-Saturation Gate — Only Act on Saturated APs (detection.ap_cu_total_min) | Accepted | 2026-05-31 |
 | [0009](./0009-disable-able-detection-criteria.md) | Disable-able Detection Criteria — `null` Turns a Client Signal Off | Implemented | 2026-06-14 |
 | [0010](./0010-traffic-inactivity-detection.md) | Traffic-Inactivity Detection — an Opt-in "Associated but No Traffic" Flatline Detector | Accepted | 2026-07-15 |
+| [0011](./0011-dns-thrash-detection-pihole.md) | DNS-Thrash Detection via an Optional Pi-hole Data Source | Accepted | 2026-07-15 |

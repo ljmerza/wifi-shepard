@@ -10,6 +10,8 @@ from pathlib import Path
 from .config import Config, load_config_from_path
 from .controllers import Controller, build_controller
 from .db import Database
+from .dns_sources import DnsSource, build_dns_sources
+from .dns_thrash import DnsThrashDetector
 from .notify import HomeAssistantNotifier, Notifier
 from .pipeline import build_pipeline
 from .reboot.ha_resolver import HADeviceRegistry
@@ -51,6 +53,10 @@ class Daemon:
         self.rebooter = rebooter
         self.registry = registry
         self.db = Database(self.db_path)
+        # ADR-0011: optional DNS data source, built once at startup from dns_sources:.
+        # None when unconfigured; source URL/password changes require a restart (a
+        # SIGHUP retunes only the dns_thrash thresholds, not the source wiring).
+        self._dns_source: DnsSource | None = build_dns_sources(self.config)
         self._scanners: list[Scanner] = []
         self._scheduler: RebootScheduler | None = self._build_scheduler()
         self.first_cycle_started = asyncio.Event()
@@ -108,9 +114,19 @@ class Daemon:
                 poll_interval_seconds=self.config.scanner.poll_interval_seconds,
                 config=self.config,
                 pipeline=build_pipeline(self.config, controller=c, db=self.db, ha=self.ha),
+                dns_detector=self._build_dns_detector(),
             )
             for c in self.controllers
         ]
+
+    def _build_dns_detector(self) -> DnsThrashDetector | None:
+        # ADR-0011: one detector per scanner, sharing the merged source. Built only
+        # when the feature is configured (config validation guarantees dns_thrash
+        # implies a source). Per-scanner state stays isolated to that controller's
+        # clients, so multi-controller setups don't cross-count.
+        if self.config.detection.dns_thrash is None or self._dns_source is None:
+            return None
+        return DnsThrashDetector(self.config, self._dns_source)
 
     async def run(self) -> int:
         loop = asyncio.get_running_loop()
@@ -121,6 +137,10 @@ class Daemon:
             await self.db.connect()
             for controller in self.controllers:
                 await controller.login()
+            if self._dns_source is not None:
+                # Authenticate the DNS source(s). MergedDnsSource tolerates a down
+                # instance at startup (logs + degrades), so this never fails the daemon.
+                await self._dns_source.login()
             self._scanners = self._build_scanners()
             if self._scheduler is not None:
                 scheduler_task = asyncio.create_task(self._run_scheduler())
@@ -162,6 +182,11 @@ class Daemon:
                     await controller.close()
                 except Exception:
                     logger.exception("controller_close_failed")
+            if self._dns_source is not None:
+                try:
+                    await self._dns_source.close()
+                except Exception:
+                    logger.exception("dns_source_close_failed")
             if self.ha is not None:
                 try:
                     await self.ha.close()

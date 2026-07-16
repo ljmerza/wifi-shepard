@@ -33,6 +33,23 @@ home_assistant:
   token: ${HA_TOKEN}
   notify_service: mobile_app_pixel
 
+# ADR-0011: optional DNS-thrash data source (Pi-hole v6 FTL REST API). Off by
+# default — omit this block entirely and detection.dns_thrash below to leave the
+# feature disabled (zero behavior change). The UniFi controller can't see per-client
+# DNS, so this reads query history from Pi-hole to catch application-layer reconnect
+# loops (a wedged device re-resolving one broker hostname hundreds of times/day).
+#
+# List every Pi-hole a client might use as a resolver — a client's queries can land
+# entirely on one instance, so they are merged. Clients with a HARDCODED upstream
+# resolver (8.8.8.8 etc.) bypass Pi-hole and are invisible to this signal; point a
+# device you want watched at Pi-hole. The password is env-interpolated, never in repo.
+# dns_sources:
+#   - type: pihole
+#     password: ${PIHOLE_PASSWORD}
+#     instances:
+#       - url: http://192.168.1.186
+#       - url: http://192.168.1.189
+
 scanner:
   poll_interval_seconds: 60
   window_samples: 5
@@ -56,6 +73,17 @@ detection:
   signal_dbm_max: -70
   radios: [ng]
   ap_cu_total_min: 60
+  # ADR-0011: DNS-thrash detection. Off unless this block is present AND a
+  # dns_sources: block above supplies a resolver (a dns_thrash block with no
+  # dns_sources is a config error — a detection you think is armed must have data).
+  # A MAC resolving one domain more than same_domain_queries_max times within
+  # window_minutes, sustained for sustain_windows * window_minutes, is flagged and
+  # routed through the same kick/backoff/quiet-hours/notify pipeline as an RF flag.
+  # Per-MAC override: overrides[].dns_same_domain_queries_max (override > global).
+  # dns_thrash:
+  #   same_domain_queries_max: 20   # per domain, per window
+  #   window_minutes: 60
+  #   sustain_windows: 2            # flag only after 2 * 60 min continuously over
 
   # ADR-0010: "associated but no traffic" detector. INDEPENDENT of the criteria
   # above (no signal/rate/retry threshold, no saturation gate, no quiet-hours

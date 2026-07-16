@@ -21,6 +21,10 @@ class ClientSnapshot:
     # them, so their absence never breaks scanning or the conjunctive scorer.
     tx_bytes: int | None = None
     rx_bytes: int | None = None
+    # ADR-0011: the client's IP, for joining per-client DNS query history (Pi-hole)
+    # to per-MAC state. Fail-soft (None when the controller doesn't report it) —
+    # display/DNS use only, never the fail-closed detection path.
+    ip: str | None = None
 
 
 @dataclass(frozen=True)

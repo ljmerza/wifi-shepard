@@ -109,6 +109,7 @@ def make_client(
     name: str | None = None,
     tx_bytes: int | None = None,
     rx_bytes: int | None = None,
+    ip: str | None = None,
 ) -> SimpleNamespace:
     return SimpleNamespace(
         mac=mac,
@@ -122,7 +123,37 @@ def make_client(
         name=name,
         tx_bytes=tx_bytes,
         rx_bytes=rx_bytes,
+        ip=ip,
     )
+
+
+@dataclass
+class FakeDnsSource:
+    """Stand-in DnsSource (ADR-0011). Returns whatever ``queries`` is set to on each
+    ``queries_since`` (tests reassign it between polls to control what's "new"), and
+    can be flipped to ``fail`` to exercise the fetch-failure fail-soft path.
+
+    Type-agnostic on the query objects — stores whatever DnsQuery-shaped items the
+    test passes, so the shared conftest doesn't import the dns_sources package.
+    """
+
+    queries: list[Any] = field(default_factory=list)
+    fail: bool = False
+    since_calls: list[float] = field(default_factory=list)
+    login_calls: int = 0
+    closed: bool = False
+
+    async def login(self) -> None:
+        self.login_calls += 1
+
+    async def queries_since(self, since: float) -> list[Any]:
+        self.since_calls.append(since)
+        if self.fail:
+            raise RuntimeError("dns source unavailable")
+        return list(self.queries)
+
+    async def close(self) -> None:
+        self.closed = True
 
 
 @pytest.fixture
