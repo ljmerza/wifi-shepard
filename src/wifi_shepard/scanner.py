@@ -114,6 +114,9 @@ class Scanner:
         if detector is None or pipeline is None:
             return
         flagged = await detector.observe(clients)
+        # ADR-0012: persist observability every cycle — even when nothing is flagged,
+        # so the UI can prove the source authenticated and polled.
+        await self._persist_dns_observability(detector)
         if not flagged:
             return
         client_by_mac = {client.mac: client for client in clients}
@@ -129,3 +132,15 @@ class Scanner:
                 # (disconnected) — nothing to kick.
                 continue
             await pipeline.actor.handle(client, {"trigger": "dns_thrash"})
+
+    async def _persist_dns_observability(self, detector: Any) -> None:
+        # ADR-0012: write a per-poll health heartbeat (one row per DNS instance).
+        source = getattr(detector, "source", None)
+        if source is not None and hasattr(source, "last_poll_status"):
+            for st in source.last_poll_status():
+                await self.db.insert_dns_source_sample(
+                    source_name=st["name"],
+                    ok=st["ok"],
+                    query_count=st["query_count"],
+                    error=st.get("error"),
+                )

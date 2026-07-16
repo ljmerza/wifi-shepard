@@ -42,6 +42,17 @@ class Store(Protocol):
         dry_run: bool,
     ) -> None: ...
 
+    async def insert_dns_source_sample(
+        self,
+        *,
+        source_name: str,
+        ok: bool,
+        query_count: int,
+        error: str | None = None,
+    ) -> None: ...
+
+    async def insert_dns_thrash_observations(self, rows: list[dict[str, Any]]) -> None: ...
+
     async def recent_kick_timestamps(self, mac: str, *, since: float) -> list[float]: ...
 
 
@@ -297,6 +308,61 @@ class Database:
             "INSERT INTO reboot_events (ts, mac, mode, outcome, target, dry_run) "
             "VALUES (?, ?, ?, ?, ?, ?)",
             (time.time(), mac, mode, outcome, target, 1 if dry_run else 0),
+        )
+        await self._conn.commit()
+
+    async def insert_dns_source_sample(
+        self,
+        *,
+        source_name: str,
+        ok: bool,
+        query_count: int,
+        error: str | None = None,
+    ) -> None:
+        """Persist one per-poll DNS-source heartbeat (ADR-0012), pruning old rows."""
+        if self._conn is None:
+            raise RuntimeError("connect() must be called before insert_dns_source_sample()")
+        now = time.time()
+        await self._conn.execute(
+            "INSERT INTO dns_source_samples (ts, source_name, ok, query_count, error) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (now, source_name, 1 if ok else 0, int(query_count), error),
+        )
+        await self._conn.execute(
+            "DELETE FROM dns_source_samples WHERE ts < ?", (now - _DNS_RETENTION_SECONDS,)
+        )
+        await self._conn.commit()
+
+    async def insert_dns_thrash_observations(self, rows: list[dict[str, Any]]) -> None:
+        """Persist a batch of near-threshold standings (ADR-0012), pruning old rows.
+
+        Each row is a dict with mac/domain/count/threshold/over_since (the detector's
+        ``standings()`` shape). A no-op on an empty batch — a quiet poll writes nothing.
+        """
+        if self._conn is None:
+            raise RuntimeError(
+                "Database.connect() must be called before insert_dns_thrash_observations()"
+            )
+        if not rows:
+            return
+        now = time.time()
+        await self._conn.executemany(
+            "INSERT INTO dns_thrash_observations "
+            "(ts, mac, domain, query_count, threshold, over_since) VALUES (?, ?, ?, ?, ?, ?)",
+            [
+                (
+                    now,
+                    r["mac"],
+                    r["domain"],
+                    int(r["count"]),
+                    int(r["threshold"]),
+                    r.get("over_since"),
+                )
+                for r in rows
+            ],
+        )
+        await self._conn.execute(
+            "DELETE FROM dns_thrash_observations WHERE ts < ?", (now - _DNS_RETENTION_SECONDS,)
         )
         await self._conn.commit()
 
