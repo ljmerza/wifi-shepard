@@ -58,6 +58,20 @@ def _parse_pct(value: Any) -> float | None:
         return None
 
 
+def _optional_int(raw: dict[str, Any], key: str) -> int | None:
+    """Read an optional integer field fail-soft (ADR-0010 byte counters).
+
+    Unlike ``_require`` (fail-closed for detection-critical fields), a missing or
+    wrong-typed value yields ``None`` so its absence never breaks scanning. ``bool``
+    is rejected explicitly — it is an ``int`` subclass, and a stray ``true`` must not
+    coerce to ``1`` byte of traffic.
+    """
+    value = raw.get(key)
+    if isinstance(value, bool) or not isinstance(value, int):
+        return None
+    return value
+
+
 def _require(raw: dict[str, Any], key: str, expected_type: type, *, owner: str) -> Any:
     if key not in raw:
         raise UniFiSchemaError(f"{owner}.{key} missing")
@@ -160,6 +174,8 @@ class UniFiController:
                     ap_id=ap_mac,
                     ap_cu_total=cu_total,
                     name=name,
+                    tx_bytes=_optional_int(raw, "tx_bytes"),
+                    rx_bytes=_optional_int(raw, "rx_bytes"),
                 )
             )
         return out

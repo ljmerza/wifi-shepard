@@ -17,6 +17,7 @@ from .actor import Actor
 from .backoff import BackoffManager
 from .controllers.base import Controller
 from .db import Store
+from .inactivity import InactivityScorer
 from .notify import Notifier
 from .rate_limit import KickRateLimiter
 from .scorer import Scorer
@@ -31,6 +32,7 @@ class DetectionPipeline:
     """
 
     scorer: Scorer
+    inactivity: InactivityScorer
     backoff: BackoffManager
     rate_limiter: KickRateLimiter
     actor: Actor
@@ -44,6 +46,17 @@ class DetectionPipeline:
             self.scorer = Scorer(config, wall_now_fn=self.scorer.wall_now_fn)
         else:
             self.scorer.config = config
+        # ADR-0010: same reload convention for the inactivity scorer, keyed on its
+        # OWN window size (detection.inactivity.window_samples), whose deque maxlen is
+        # also fixed at construction. Any other change (min_bytes, macs, enabled) is
+        # read live, so a config swap-in-place preserves the accumulated byte windows.
+        if (
+            self.inactivity.config.detection.inactivity.window_samples
+            != config.detection.inactivity.window_samples
+        ):
+            self.inactivity = InactivityScorer(config)
+        else:
+            self.inactivity.config = config
         self.actor.config = config
         self.backoff.quarantine_after_kicks = config.backoff.quarantine_after_kicks
         # ADR-0004 AC-8: update rate-limit thresholds in place WITHOUT resetting
@@ -80,4 +93,11 @@ def build_pipeline(
         rate_limiter=rate_limiter,
     )
     scorer = Scorer(config)
-    return DetectionPipeline(scorer=scorer, backoff=backoff, rate_limiter=rate_limiter, actor=actor)
+    inactivity = InactivityScorer(config)
+    return DetectionPipeline(
+        scorer=scorer,
+        inactivity=inactivity,
+        backoff=backoff,
+        rate_limiter=rate_limiter,
+        actor=actor,
+    )

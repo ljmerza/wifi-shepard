@@ -39,6 +39,15 @@ scanner:
   dry_run: true
 
 detection:
+  # These three client criteria plus the ap_cu_total_min saturation gate combine
+  # CONJUNCTIVELY (AND): a client is flagged only when it fails EVERY active
+  # criterion on EVERY sample in the window at once (weak signal AND slow AND
+  # retrying AND on a saturated AP). This is deliberate — it stops healthy
+  # power-save IoT from being thrash-kicked — but it also means a strong-signal
+  # client can never trip these no matter how pathological its rate/retries.
+  # The detection.inactivity block below is a SEPARATE, independent detector for
+  # that blind spot (ADR-0010); it does not participate in this AND.
+  #
   # ADR-0009: set any of the three client criteria to `null` to disable it
   # (omitting a key keeps its default). e.g. tx_rate_kbps_max: null +
   # retry_pct_max: null = "signal + saturation only". At least one must stay set.
@@ -47,6 +56,27 @@ detection:
   signal_dbm_max: -70
   radios: [ng]
   ap_cu_total_min: 60
+
+  # ADR-0010: "associated but no traffic" detector. INDEPENDENT of the criteria
+  # above (no signal/rate/retry threshold, no saturation gate, no quiet-hours
+  # tightening) — it flags an opted-in MAC whose cumulative byte counters
+  # flatline across a full window, catching a strong-signal client whose
+  # application session has wedged (the failure the AND above can't see).
+  #
+  # Explicit per-MAC opt-in only: NO baseline learning in v1 (deferred to a
+  # future ADR), so you assert "this device normally holds a WAN session" by
+  # listing it under `macs`. Ships off. Note tx_bytes/rx_bytes count LAN traffic
+  # too, so this approximates "WAN activity" — a chatty-on-LAN but WAN-dead
+  # device won't flag (issue #18 tracks the higher-signal DNS-based variant).
+  inactivity:
+    enabled: false
+    # Flag when the summed (tx+rx) byte delta over the window is below this floor.
+    min_bytes_per_window: 1024
+    # Number of consecutive polls that must all fit under the floor.
+    window_samples: 30
+    # MACs opted into this detector. `enabled: true` with an empty list is inert.
+    macs: []
+    #  - 34:ea:e7:aa:bb:cc  # meross msg100 garage opener
 
 backoff:
   cooldowns_seconds: [300, 1800, 7200, 43200, 86400]

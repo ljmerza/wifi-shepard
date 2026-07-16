@@ -81,6 +81,12 @@ class Scanner:
             decision = pipeline.scorer.ingest(client)
             if decision is not None:
                 await pipeline.actor.handle(client, decision)
+            # ADR-0010: independent traffic-inactivity path. Feeds the same actor, so
+            # dry-run, backoff, caps, rate-limits, and HA notification all apply
+            # unchanged; the decision dict carries trigger=inactivity for the log line.
+            inactivity_decision = pipeline.inactivity.ingest(client)
+            if inactivity_decision is not None:
+                await pipeline.actor.handle(client, inactivity_decision)
 
         # Persist AP-level health (identity + CPU/mem + per-radio CU) for the
         # read-only UI's "noisy APs" view. Display-only — never feeds detection.
