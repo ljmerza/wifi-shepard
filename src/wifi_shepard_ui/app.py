@@ -237,11 +237,19 @@ def create_app(*, db_path: Path) -> FastAPI:
 
     @app.get("/", response_class=HTMLResponse)
     def overview(request: Request):
-        stats = _safe_read(lambda c: views.overview(c, now=time.time()), empty_stats)
+        stats, dns_health = _safe_read(
+            lambda c: (views.overview(c, now=time.time()), views.dns_source_health(c)),
+            (empty_stats, []),
+        )
         return templates.TemplateResponse(
             request,
             "overview.html",
-            {"stats": stats, "refresh_seconds": refresh_seconds, "active_page": "overview"},
+            {
+                "stats": stats,
+                "dns_health": dns_health,
+                "refresh_seconds": refresh_seconds,
+                "active_page": "overview",
+            },
         )
 
     @app.get("/devices", response_class=HTMLResponse)
