@@ -2,28 +2,305 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 {% block head_extra %}{% endblock %}
 <title>{% block title %}wifi-shepard{% endblock %}</title>
 <style>
-  body { font-family: ui-monospace, "SF Mono", Menlo, monospace; margin: 1.5rem; max-width: 1100px; }
-  h1 { font-size: 1.2rem; margin-bottom: 0.5rem; }
+  /* Design tokens. Light is the default; dark follows the OS preference.
+     color-scheme also flips form controls + scrollbars to match. */
+  :root {
+    color-scheme: light dark;
+    --bg: #f5f7fa;
+    --surface: #ffffff;
+    --surface-alt: #f0f3f7;
+    --border: #d9e0e8;
+    --fg: #131920;
+    --fg-muted: #5b6b7c;
+    --accent: #2563eb;
+    --ok-fg: #14672f;
+    --ok-bg: #dcf3e4;
+    --warn-fg: #8a4b09;
+    --warn-bg: #fbeed7;
+    --danger-fg: #a3161c;
+    --danger-bg: #fbdedf;
+    --shadow: 0 1px 2px rgb(16 25 34 / 6%), 0 1px 3px rgb(16 25 34 / 4%);
+    --radius: 10px;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0d1117;
+      --surface: #161b22;
+      --surface-alt: #1b222c;
+      --border: #2b3542;
+      --fg: #e4ebf2;
+      --fg-muted: #8a97a6;
+      --accent: #62a8ff;
+      --ok-fg: #6fd38a;
+      --ok-bg: #123020;
+      --warn-fg: #e3b341;
+      --warn-bg: #33270c;
+      --danger-fg: #ff8078;
+      --danger-bg: #3a1618;
+      --shadow: none;
+    }
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--fg);
+    font-family: var(--sans);
+    font-size: 15px;
+    line-height: 1.5;
+    -webkit-text-size-adjust: 100%;
+  }
+
+  /* ---- header / nav ---- */
+  .topbar {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+  }
+  .topbar-inner {
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 0.7rem 1rem;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.4rem 1.25rem;
+  }
+  .brand {
+    font-weight: 650;
+    letter-spacing: -0.01em;
+    margin-right: auto;
+  }
+  .brand span { color: var(--fg-muted); font-weight: 400; }
+  nav { display: flex; gap: 0.35rem; }
+  nav a {
+    color: var(--fg-muted);
+    text-decoration: none;
+    padding: 0.3rem 0.7rem;
+    border-radius: 999px;
+    font-weight: 500;
+  }
+  nav a:hover { background: var(--surface-alt); color: var(--fg); }
+  nav a.active { background: var(--accent); color: #fff; }
+
+  main { max-width: 1100px; margin: 0 auto; padding: 1.25rem 1rem 3rem; }
+
+  h1 { font-size: 1.35rem; margin: 0 0 1rem; letter-spacing: -0.02em; }
+  h2 { font-size: 1rem; margin: 1.75rem 0 0.75rem; letter-spacing: -0.01em; }
+  h1 .mac-title { font-family: var(--mono); font-size: 1.1rem; color: var(--fg-muted); }
+
+  a { color: var(--accent); }
+
+  /* ---- stat tiles ---- */
+  .tiles {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 0.75rem;
+  }
+  .tile {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 0.85rem 1rem;
+    box-shadow: var(--shadow);
+  }
+  .tile .label {
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--fg-muted);
+  }
+  .tile .value {
+    font-size: 1.75rem;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    line-height: 1.2;
+  }
+  .tile.is-alert .value { color: var(--danger-fg); }
+
+  /* ---- cards ---- */
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    overflow: hidden;
+  }
+  .card-head {
+    padding: 0.7rem 1rem;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 0.5rem;
+  }
+  .card-head h2 { margin: 0; }
+  .card-note { font-size: 0.78rem; color: var(--fg-muted); }
+
+  /* ---- tables ---- */
+  .table-wrap { overflow-x: auto; }
   table { border-collapse: collapse; width: 100%; }
-  th, td { padding: 0.4rem 0.6rem; border-bottom: 1px solid #333; text-align: left; }
+  th, td { padding: 0.55rem 1rem; text-align: left; }
+  thead th {
+    background: var(--surface-alt);
+    border-bottom: 1px solid var(--border);
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--fg-muted);
+    font-weight: 600;
+    white-space: nowrap;
+  }
+  tbody tr { border-top: 1px solid var(--border); }
+  tbody tr:first-child { border-top: 0; }
+  tbody tr:hover { background: var(--surface-alt); }
   th a { color: inherit; text-decoration: none; }
-  th a:hover { text-decoration: underline; }
-  tr.dry { color: #888; font-style: italic; }
-  .tile { display: inline-block; padding: 0.6rem 1rem; margin-right: 1rem; border: 1px solid #444; border-radius: 4px; }
-  .tile .label { font-size: 0.8rem; color: #888; }
-  .tile .value { font-size: 1.4rem; }
-  nav a { margin-right: 1rem; }
-  .empty { color: #888; padding: 1rem 0; }
+  th a:hover { color: var(--accent); }
+  th a::after { content: " \2195"; opacity: 0.4; }
+  .mono, td.mono { font-family: var(--mono); font-size: 0.85em; }
+  .num { font-variant-numeric: tabular-nums; }
+  .muted { color: var(--fg-muted); }
+  .nowrap { white-space: nowrap; }
+  tr.dry { color: var(--fg-muted); }
+
+  /* Rows sharing an attempt_group read as one logical kick (ADR-0003 AC-7):
+     tint them and hang a rule down the left edge to bracket the pair. */
+  tr[data-attempt-group] td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
+  .group-id {
+    font-family: var(--mono);
+    font-size: 0.72em;
+    color: var(--fg-muted);
+  }
+
+  /* ---- badges ---- */
+  .badge {
+    display: inline-block;
+    padding: 0.12rem 0.5rem;
+    border-radius: 999px;
+    font-size: 0.72rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    white-space: nowrap;
+  }
+  .badge-normal { background: var(--ok-bg); color: var(--ok-fg); }
+  .badge-evaluating { background: var(--warn-bg); color: var(--warn-fg); }
+  .badge-kicked { background: var(--warn-bg); color: var(--warn-fg); }
+  .badge-quarantine { background: var(--danger-bg); color: var(--danger-fg); }
+  .badge-neutral { background: var(--surface-alt); color: var(--fg-muted); border: 1px solid var(--border); }
+
+  /* ---- sparkline ---- */
+  .spark { display: block; width: 100%; height: 40px; overflow: visible; }
+  .spark-line { fill: none; stroke: var(--accent); stroke-width: 1.5; stroke-linejoin: round; stroke-linecap: round; }
+  .spark-fill { fill: var(--accent); opacity: 0.12; stroke: none; }
+  .spark-mini { width: 84px; height: 22px; }
+  .spark-empty { font-size: 0.78rem; color: var(--fg-muted); }
+
+  .chart-axis {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.7rem;
+    color: var(--fg-muted);
+    margin-top: 0.2rem;
+  }
+
+  .empty { color: var(--fg-muted); padding: 1.5rem 1rem; text-align: center; }
+
+  /* Narrow screens hide <thead>, which takes the sort links with it — this bar
+     carries the same affordance as plain links (no JS, no write routes). */
+  .sort-bar { display: none; }
+
+  /* ---- narrow screens: collapse each table row into a card ---- */
+  @media (max-width: 40rem) {
+    body { font-size: 14px; }
+    main { padding: 1rem 0.75rem 2rem; }
+    .tiles { grid-template-columns: repeat(auto-fit, minmax(45%, 1fr)); }
+    .tile .value { font-size: 1.5rem; }
+
+    .table-wrap { overflow-x: visible; }
+    table, tbody, tr, td { display: block; width: 100%; }
+    thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+    tbody tr {
+      border-top: 1px solid var(--border);
+      padding: 0.5rem 0.25rem;
+    }
+    tbody tr:hover { background: transparent; }
+    td {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      gap: 1rem;
+      padding: 0.22rem 1rem;
+      text-align: right;
+    }
+    /* The label lives in data-label so the same markup serves both layouts. */
+    td::before {
+      content: attr(data-label);
+      color: var(--fg-muted);
+      font-size: 0.72rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      font-weight: 600;
+      text-align: left;
+      flex: 0 0 auto;
+    }
+    td:empty { display: none; }
+    tr[data-attempt-group] td:first-child { box-shadow: none; }
+    tr[data-attempt-group] { border-left: 3px solid var(--accent); }
+
+    .sort-bar {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 0.35rem;
+      padding: 0.6rem 1rem;
+      background: var(--surface-alt);
+      border-bottom: 1px solid var(--border);
+    }
+    .sort-bar-label {
+      font-size: 0.72rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      font-weight: 600;
+      color: var(--fg-muted);
+    }
+    .sort-bar a {
+      text-decoration: none;
+      font-size: 0.78rem;
+      font-weight: 500;
+      padding: 0.2rem 0.6rem;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: var(--surface);
+      color: var(--fg-muted);
+    }
+    .sort-bar a.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+  }
 </style>
 </head>
 <body>
-<nav>
-  <a href="/">Overview</a>
-  <a href="/devices">Devices</a>
-</nav>
+<header class="topbar">
+  <div class="topbar-inner">
+    <div class="brand">wifi-shepard <span>· read-only</span></div>
+    <nav>
+      <a href="/"{% if active_page == "overview" %} class="active"{% endif %}>Overview</a>
+      <a href="/devices"{% if active_page == "devices" %} class="active"{% endif %}>Devices</a>
+    </nav>
+  </div>
+</header>
+<main>
 {% block body %}{% endblock %}
+</main>
 </body>
 </html>

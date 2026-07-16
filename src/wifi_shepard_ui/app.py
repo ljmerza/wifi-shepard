@@ -11,6 +11,7 @@ import os
 import secrets
 import sqlite3
 import time
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -40,6 +41,43 @@ def _radio_band(radio: str | None) -> str:
     if not radio:
         return "?"
     return _RADIO_BANDS.get(radio, radio)
+
+
+# Sparklines render into a fixed 0..100 viewBox and are stretched to the
+# container by preserveAspectRatio="none" — so these are viewBox units, not
+# pixels. The stroke stays crisp under that non-uniform scale via
+# vector-effect="non-scaling-stroke" in the template.
+_SPARK_W = 100.0
+_SPARK_H = 100.0
+_SPARK_PAD = 6.0  # vertical inset so peak/flat lines aren't clipped by the stroke
+
+
+def _spark_points(values: Sequence[float] | None) -> str:
+    """Map a numeric series to an SVG polyline `points` string.
+
+    Returns "" for a series too short to draw (0 or 1 points); templates treat
+    that as the no-data case. A flat series renders as a baseline rather than
+    dividing by a zero range.
+    """
+    vals = [float(v) for v in (values or [])]
+    if len(vals) < 2:
+        return ""
+    lo, hi = min(vals), max(vals)
+    span = (hi - lo) or 1.0
+    step = _SPARK_W / (len(vals) - 1)
+    usable = _SPARK_H - 2 * _SPARK_PAD
+    return " ".join(
+        f"{i * step:.2f},{_SPARK_H - _SPARK_PAD - ((v - lo) / span) * usable:.2f}"
+        for i, v in enumerate(vals)
+    )
+
+
+def _spark_area(values: Sequence[float] | None) -> str:
+    """Same series as _spark_points, closed down to the baseline for a fill."""
+    points = _spark_points(values)
+    if not points:
+        return ""
+    return f"0,{_SPARK_H:.0f} {points} {_SPARK_W:.0f},{_SPARK_H:.0f}"
 
 
 def _refresh_seconds() -> int:
@@ -120,6 +158,8 @@ def create_app(*, db_path: Path) -> FastAPI:
     templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
     templates.env.filters["fmt_ts"] = _format_ts
     templates.env.filters["radio_band"] = _radio_band
+    templates.env.filters["spark_points"] = _spark_points
+    templates.env.filters["spark_area"] = _spark_area
 
     # Snapshot the auto-refresh interval at construction time (matches the env
     # snapshot pattern below; a container restart picks up changes).
@@ -201,19 +241,23 @@ def create_app(*, db_path: Path) -> FastAPI:
         return templates.TemplateResponse(
             request,
             "overview.html",
-            {"stats": stats, "refresh_seconds": refresh_seconds},
+            {"stats": stats, "refresh_seconds": refresh_seconds, "active_page": "overview"},
         )
 
     @app.get("/devices", response_class=HTMLResponse)
     def devices(request: Request, sort: str = "mac"):
         rows = _safe_read(lambda c: views.list_devices(c, allowlist=allowlist, now=time.time()), [])
         rows = views.sort_devices(rows, sort)
-        return templates.TemplateResponse(request, "devices.html", {"rows": rows, "sort": sort})
+        return templates.TemplateResponse(
+            request, "devices.html", {"rows": rows, "sort": sort, "active_page": "devices"}
+        )
 
     @app.get("/devices/{mac}", response_class=HTMLResponse)
     def device_history(request: Request, mac: str):
         events = _safe_read(lambda c: views.device_history(c, mac=mac), [])
-        return templates.TemplateResponse(request, "history.html", {"mac": mac, "events": events})
+        return templates.TemplateResponse(
+            request, "history.html", {"mac": mac, "events": events, "active_page": "devices"}
+        )
 
     _assert_no_write_routes(app)
     return app

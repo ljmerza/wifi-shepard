@@ -6,56 +6,93 @@
 {% block body %}
 <h1>Overview</h1>
 
-<div>
-  <span class="tile">
+<div class="tiles">
+  <div class="tile">
     <div class="label">Tracked clients</div>
     <div class="value">{{ stats.total_clients }}</div>
-  </span>
-  <span class="tile">
+  </div>
+  <div class="tile{% if stats.quarantined %} is-alert{% endif %}">
     <div class="label">Quarantined</div>
     <div class="value">{{ stats.quarantined }}</div>
-  </span>
-  <span class="tile">
+  </div>
+  <div class="tile">
     <div class="label">Kicks today</div>
     <div class="value">{{ stats.kicks_today }}</div>
-  </span>
-  <span class="tile">
+  </div>
+  <div class="tile">
     <div class="label">Kicks this week</div>
     <div class="value">{{ stats.kicks_this_week }}</div>
-  </span>
+  </div>
 </div>
 
-<h2>Top noisy APs</h2>
-{% if stats.noisy_aps %}
-<table>
-  <thead>
-    <tr>
-      <th>AP name</th>
-      <th>AP MAC</th>
-      <th>CPU</th>
-      <th>Memory</th>
-      <th>Channels (utilization)</th>
-    </tr>
-  </thead>
-  <tbody>
-    {% for ap in stats.noisy_aps %}
-    <tr>
-      <td>{{ ap.name or "—" }}</td>
-      <td>{{ ap.mac or "—" }}</td>
-      <td>{% if ap.cpu_pct is not none %}{{ "%.0f"|format(ap.cpu_pct) }}%{% else %}—{% endif %}</td>
-      <td>{% if ap.mem_pct is not none %}{{ "%.0f"|format(ap.mem_pct) }}%{% else %}—{% endif %}</td>
-      <td>
-        {%- if ap.radios -%}
-          {%- for r in ap.radios -%}
-            {{ r.radio | radio_band }} ch{{ r.channel }}: {{ r.cu_total }}%{% if not loop.last %} · {% endif %}
-          {%- endfor -%}
-        {%- else -%}—{%- endif -%}
-      </td>
-    </tr>
-    {% endfor %}
-  </tbody>
-</table>
-{% else %}
-<p class="empty">No AP data yet — daemon has not recorded any AP samples.</p>
-{% endif %}
+<div class="card" style="margin-top:1.5rem">
+  <div class="card-head">
+    <h2>Kick activity</h2>
+    <span class="card-note">real kicks per hour · trailing 24h · peak {{ stats.kicks_by_hour | max if stats.kicks_by_hour else 0 }}/h</span>
+  </div>
+  <div style="padding: 0.9rem 1rem 0.6rem;">
+    {% set kick_points = stats.kicks_by_hour | spark_points %}
+    {% if kick_points %}
+    <svg class="spark" viewBox="0 0 100 100" preserveAspectRatio="none" role="img"
+         aria-label="Real kicks per hour over the trailing 24 hours">
+      <polygon class="spark-fill" points="{{ stats.kicks_by_hour | spark_area }}"></polygon>
+      <polyline class="spark-line" vector-effect="non-scaling-stroke" points="{{ kick_points }}"></polyline>
+    </svg>
+    <div class="chart-axis"><span>24h ago</span><span>now</span></div>
+    {% else %}
+    <p class="spark-empty">Not enough history to chart yet.</p>
+    {% endif %}
+  </div>
+</div>
+
+<div class="card" style="margin-top:1.5rem">
+  <div class="card-head">
+    <h2>Top noisy APs</h2>
+    <span class="card-note">top 5 by peak channel utilization</span>
+  </div>
+  {% if stats.noisy_aps %}
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>AP name</th>
+          <th>AP MAC</th>
+          <th>CPU</th>
+          <th>Memory</th>
+          <th>Channels (utilization)</th>
+          <th>Trend</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for ap in stats.noisy_aps %}
+        <tr>
+          <td data-label="AP name">{{ ap.name or "—" }}</td>
+          <td data-label="AP MAC" class="mono">{{ ap.mac or "—" }}</td>
+          <td data-label="CPU" class="num nowrap">{% if ap.cpu_pct is not none %}{{ "%.0f"|format(ap.cpu_pct) }}%{% else %}—{% endif %}</td>
+          <td data-label="Memory" class="num nowrap">{% if ap.mem_pct is not none %}{{ "%.0f"|format(ap.mem_pct) }}%{% else %}—{% endif %}</td>
+          <td data-label="Channels">
+            {%- if ap.radios -%}
+              {%- for r in ap.radios -%}
+                {{ r.radio | radio_band }} ch{{ r.channel }}: {{ r.cu_total }}%{% if not loop.last %} · {% endif %}
+              {%- endfor -%}
+            {%- else -%}—{%- endif -%}
+          </td>
+          <td data-label="Trend">
+            {% set ap_points = ap.cu_trend | spark_points %}
+            {%- if ap_points -%}
+            <svg class="spark spark-mini" viewBox="0 0 100 100" preserveAspectRatio="none" role="img"
+                 aria-label="Recent channel utilization trend for {{ ap.name or ap.mac }}">
+              <polyline class="spark-line" vector-effect="non-scaling-stroke" points="{{ ap_points }}"></polyline>
+            </svg>
+            {%- else -%}<span class="muted">—</span>{%- endif -%}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="empty">No AP data yet — daemon has not recorded any AP samples.</p>
+  {% endif %}
+</div>
 {% endblock %}
