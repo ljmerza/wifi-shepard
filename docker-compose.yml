@@ -6,7 +6,13 @@ wifi-shepard:
     - ./wifi-shepard.env
   volumes:
     - ./volumes/wifi-shepard:/data
-    - ./volumes/wifi-shepard/config.yaml:/config/config.yaml:ro
+    # ADR-0013 Phase 0: mount the config *directory*, not the single file. A
+    # single-file bind mount pins the file's inode at container-create time, so
+    # an atomic rewrite (write-new + rename → new inode) leaves the daemon
+    # reading the stale file and the file-watch reload never fires. Mounting the
+    # dir lets the watcher (and the settings-UI writer, later phase) see the new
+    # inode. config.yaml lives at ./volumes/wifi-shepard/config/config.yaml.
+    - ./volumes/wifi-shepard/config:/config:ro
 
 wifi-shepard-ui:
   build:
@@ -18,8 +24,17 @@ wifi-shepard-ui:
     - ./env/wifi-shepard-ui.env
   environment:
     - WIFI_SHEPARD_DB_PATH=/data/state.db
+    # ADR-0013: the settings UI reads/writes this file.
+    - WIFI_SHEPARD_CONFIG_PATH=/config/config.yaml
   volumes:
     - ./volumes/wifi-shepard:/data:ro
+    # ADR-0013: mount the config *directory* :rw so the Settings UI can save edits
+    # back to config.yaml (the daemon mounts the same dir :ro and file-watch reloads).
+    # Set WIFI_SHEPARD_UI_TOKEN in ./env/wifi-shepard-ui.env before exposing this —
+    # writes follow the same optional-token auth as reads (unset = open, homelab
+    # default). The old WIFI_SHEPARD_UI_ALLOWLIST env is obsolete: the UI now reads
+    # the authoritative allowlist straight from config.yaml.
+    - ./volumes/wifi-shepard/config:/config:rw
   expose:
     - 8683
   healthcheck:

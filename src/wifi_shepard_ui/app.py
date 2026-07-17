@@ -1,7 +1,10 @@
-"""FastAPI app factory for the wifi-shepard read-only sidecar.
+"""FastAPI app factory for the wifi-shepard sidecar.
 
-Exposes three GET routes (`/`, `/devices`, `/devices/{mac}`) plus `/healthz`.
-No write paths — see AC-6 in ADR-0002.
+Read-only GET routes (`/`, `/devices`, `/devices/{mac}`, `/dns`, `/healthz`) plus the
+ADR-0013 settings editor: `GET /settings` (form pre-filled from config.yaml) and the
+one write path `POST /settings` (validate + round-trip write). Every other route stays
+GET-only, enforced by `_assert_no_write_routes` (ADR-0002's blanket no-write rule,
+amended by ADR-0013 to a single-path allowlist).
 """
 
 from __future__ import annotations
@@ -16,10 +19,10 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse, PlainTextResponse
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 from fastapi.templating import Jinja2Templates
 
-from wifi_shepard_ui import views
+from wifi_shepard_ui import config_io, settings_schema, views
 from wifi_shepard_ui.db import open_readonly
 
 logger = logging.getLogger(__name__)
@@ -104,22 +107,28 @@ _EMPTY_STATE_OPERATIONAL_ERRORS = (
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
 
-# AC-6: v1 sidecar is read-only. The test file's grep catches write
-# decorators at source-scan time; this set is the runtime fence checked
-# inside create_app() after every route is registered.
+# The sidecar is read-only EXCEPT for the ADR-0013 settings save route. This runtime
+# fence (checked in create_app after every route is registered) keeps every OTHER
+# route GET-only, so a stray write endpoint still fails loudly. ADR-0002's original
+# blanket no-write rule is amended by ADR-0013 to this single-path allowlist.
 _FORBIDDEN_HTTP_METHODS = frozenset({"POST", "PUT", "DELETE", "PATCH"})
+_ALLOWED_WRITE_PATHS = frozenset({"/settings"})
 
 
 def _assert_no_write_routes(app: FastAPI) -> None:
     offenders: list[str] = []
     for route in app.routes:
+        path = getattr(route, "path", None)
+        if path in _ALLOWED_WRITE_PATHS:
+            continue
         methods = getattr(route, "methods", None) or set()
         bad = _FORBIDDEN_HTTP_METHODS & {m.upper() for m in methods}
         if bad:
-            offenders.append(f"{getattr(route, 'path', route)!r} -> {sorted(bad)}")
+            offenders.append(f"{path!r} -> {sorted(bad)}")
     if offenders:
         raise RuntimeError(
-            "v1 wifi-shepard-ui must be read-only — found write routes: " + "; ".join(offenders)
+            "wifi-shepard-ui must be read-only outside the settings save route — found "
+            "unexpected write routes: " + "; ".join(offenders)
         )
 
 
@@ -152,8 +161,13 @@ def _check_db_schema(db_path: Path) -> None:
         conn.close()
 
 
-def create_app(*, db_path: Path) -> FastAPI:
+def create_app(*, db_path: Path, config_path: Path | None = None) -> FastAPI:
     _check_db_schema(db_path)
+    # ADR-0013: the settings UI reads/writes this file. Default matches the daemon's
+    # WIFI_SHEPARD_CONFIG (/config/config.yaml); the containing dir is bind-mounted
+    # :rw into the sidecar (Phase 5 compose) so writes reach the daemon's file.
+    if config_path is None:
+        config_path = Path(os.environ.get("WIFI_SHEPARD_CONFIG_PATH", "/config/config.yaml"))
     app = FastAPI(title="wifi-shepard-ui", docs_url=None, redoc_url=None)
     templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
     templates.env.filters["fmt_ts"] = _format_ts
@@ -177,13 +191,10 @@ def create_app(*, db_path: Path) -> FastAPI:
         )
     expected_token = raw_token
 
-    # AC-2: surface the allowlist flag per device. The daemon reads its own
-    # allowlist from /config/config.yaml; the UI sidecar gets a parallel
-    # WIFI_SHEPARD_UI_ALLOWLIST env (comma-separated MACs) so it doesn't
-    # need to import from wifi_shepard.config.
-    allowlist_raw = os.environ.get("WIFI_SHEPARD_UI_ALLOWLIST", "")
-    allowlist = {m.strip() for m in allowlist_raw.split(",") if m.strip()}
-
+    # Surface the allowlist flag per device. ADR-0013: now that the sidecar reads
+    # config.yaml, it reads the authoritative allowlist from there per request (so an
+    # edit shows up without a container restart) — replacing the old parallel
+    # allowlist env and its two-places-in-sync hazard.
     def _safe_read(fn, default):
         """Run fn(conn) on a fresh read-only connection; return `default` for
         the empty-state cases (AC-8: DB file absent; daemon mid-startup,
@@ -254,6 +265,7 @@ def create_app(*, db_path: Path) -> FastAPI:
 
     @app.get("/devices", response_class=HTMLResponse)
     def devices(request: Request, sort: str = "mac"):
+        allowlist = config_io.read_allowlist(config_path)
         rows = _safe_read(lambda c: views.list_devices(c, allowlist=allowlist, now=time.time()), [])
         rows = views.sort_devices(rows, sort)
         return templates.TemplateResponse(
@@ -285,8 +297,79 @@ def create_app(*, db_path: Path) -> FastAPI:
             {"health": health, "near": near, "kicks": kicks, "active_page": "dns"},
         )
 
+    @app.get("/settings", response_class=HTMLResponse)
+    def settings_page(request: Request):
+        # Read the live config.yaml to pre-fill the form (AC-2). A missing file yields
+        # an all-defaults model (AC-10); a malformed file shows an error banner rather
+        # than a 500 (still renders, so the operator can see what's wrong).
+        read_error = None
+        try:
+            model = config_io.read_form_model(config_path)
+        except Exception as exc:
+            logger.exception("settings: failed to read %s", config_path)
+            # A complete empty model so the page still renders (with the error banner
+            # and all-default fields) instead of 500-ing on a malformed config.
+            model = {
+                "scalars": {},
+                "scalar_lists": {},
+                "object_lists": {},
+                "section_enabled": {},
+                "config_exists": False,
+            }
+            read_error = str(exc)
+        return templates.TemplateResponse(
+            request,
+            "settings.html",
+            {
+                "schema": settings_schema,
+                "sections": settings_schema.SECTIONS,
+                "model": model,
+                "read_error": read_error,
+                "auth_required": bool(expected_token),
+                "active_page": "settings",
+            },
+        )
+
+    @app.post("/settings")
+    async def settings_save(request: Request):
+        # JSON-only. A cross-site POST of application/json triggers a CORS preflight
+        # this app never answers, so it can't be forged; with the header-carried bearer
+        # token (auth middleware above) this write path is CSRF-safe (ADR-0013 AC-9).
+        try:
+            payload = await request.json()
+        except Exception:
+            return JSONResponse({"ok": False, "error": "expected a JSON body"}, status_code=400)
+        if not isinstance(payload, dict):
+            return JSONResponse({"ok": False, "error": "expected a JSON object"}, status_code=400)
+        try:
+            mapping = config_io.build_mapping(payload)
+            config_io.validate_mapping(mapping)  # daemon's own fail-closed validation (AC-4)
+        except ValueError as exc:
+            return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+        try:
+            config_io.write_config(config_path, mapping)  # round-trip, atomic (AC-5)
+        except OSError as exc:
+            logger.exception("settings: failed to write %s", config_path)
+            return JSONResponse(
+                {"ok": False, "error": f"could not write config: {exc}"}, status_code=500
+            )
+        return JSONResponse(
+            {
+                "ok": True,
+                "message": (
+                    "Saved. Threshold / scanner / backoff / quiet-hours / override changes apply "
+                    "on the daemon's next scan. Connection, Home Assistant, DNS-source and "
+                    "reboot on/off changes (marked “restart”) take effect after a daemon "
+                    "restart."
+                ),
+            }
+        )
+
     _assert_no_write_routes(app)
     return app
 
 
-app = create_app(db_path=Path(os.environ.get("WIFI_SHEPARD_DB_PATH", "/data/state.db")))
+app = create_app(
+    db_path=Path(os.environ.get("WIFI_SHEPARD_DB_PATH", "/data/state.db")),
+    config_path=Path(os.environ.get("WIFI_SHEPARD_CONFIG_PATH", "/config/config.yaml")),
+)

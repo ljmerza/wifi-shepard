@@ -965,6 +965,18 @@ def load_config_from_path(path: Path | str) -> Config:
         raise ValueError(f"config root must be a YAML mapping, got {type(data).__name__}")
 
     data = _walk_and_interpolate(data)
+    return build_config_from_mapping(data)
+
+
+def build_config_from_mapping(data: Mapping[str, Any]) -> Config:
+    """Validate + build a Config from an already-loaded mapping (no file read, no
+    ``${VAR}`` interpolation). ``load_config_from_path`` calls this after reading and
+    interpolating the file; the settings UI (ADR-0013) calls it directly on a proposed
+    config whose secret fields still hold literal ``${NAME}`` placeholders — so the same
+    fail-closed validation runs without the UI ever needing the real secret in its env.
+    """
+    if not isinstance(data, Mapping):
+        raise ValueError(f"config root must be a YAML mapping, got {type(data).__name__}")
 
     scanner_data = data.get("scanner") or {}
     detection_data = data.get("detection") or {}

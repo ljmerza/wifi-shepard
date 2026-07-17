@@ -12,12 +12,15 @@
 #     the loader still rejects this key. It is omitted below.
 
 controllers:
+  # Non-secret connection fields are plain literals now (ADR-0013) — edit them here
+  # or in the Settings UI. Only the password stays an env-var reference (${VAR}); the
+  # value lives in ./env/wifi-shepard.env and is resolved only inside the daemon.
   - type: unifi
     name: home
-    host: ${UNIFI_HOST}
-    username: ${UNIFI_USERNAME}
+    host: 192.168.1.1
+    username: shepard
     password: ${UNIFI_PASSWORD}
-    site: ${UNIFI_SITE}
+    site: default
     # The code default is verify_ssl: true (full cert + hostname verification).
     # The typical UDM Pro ships a self-signed cert that won't validate against the
     # system CA bundle, so a stock UniFi setup needs this explicit opt-out. Once you

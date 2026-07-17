@@ -1,0 +1,342 @@
+{% extends "base.html" %}
+{% block title %}Settings · wifi-shepard{% endblock %}
+
+{% block head_extra %}
+<style>
+  .settings-intro { color: var(--fg-muted); margin: 0 0 1.25rem; max-width: 60ch; }
+  .banner { padding: 0.7rem 1rem; border-radius: var(--radius); margin-bottom: 1rem; font-size: 0.9rem; }
+  .banner.err { background: var(--danger-bg); color: var(--danger-fg); }
+  .banner.info { background: var(--warn-bg); color: var(--warn-fg); }
+
+  .sec { margin-bottom: 1.1rem; }
+  .sec > summary {
+    cursor: pointer; list-style: none; padding: 0.85rem 1rem;
+    background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+    box-shadow: var(--shadow); font-weight: 600;
+  }
+  .sec[open] > summary { border-radius: var(--radius) var(--radius) 0 0; border-bottom: 0; }
+  .sec > summary::before { content: "▸ "; color: var(--fg-muted); }
+  .sec[open] > summary::before { content: "▾ "; }
+  .sec-body {
+    background: var(--surface); border: 1px solid var(--border); border-top: 0;
+    border-radius: 0 0 var(--radius) var(--radius); padding: 0.4rem 1rem 1rem;
+  }
+  .sec-help { color: var(--fg-muted); font-size: 0.85rem; margin: 0.6rem 0 1rem; max-width: 70ch; }
+
+  .field { padding: 0.7rem 0; border-top: 1px solid var(--border); }
+  .field:first-child { border-top: 0; }
+  .field-label { font-weight: 550; font-size: 0.9rem; display: block; margin-bottom: 0.3rem; }
+  .field-label .unit { color: var(--fg-muted); font-weight: 400; }
+  .field-desc { color: var(--fg-muted); font-size: 0.82rem; margin: 0.35rem 0 0; max-width: 74ch; }
+  .field input[type=text], .field input[type=number], .field select, .field textarea {
+    font: inherit; padding: 0.4rem 0.55rem; border: 1px solid var(--border);
+    border-radius: 8px; background: var(--surface-alt); color: var(--fg); max-width: 22rem; width: 100%;
+  }
+  .field textarea { font-family: var(--mono); font-size: 0.85em; min-height: 4.5rem; }
+  .field-bool label { display: flex; align-items: center; gap: 0.5rem; font-weight: 550; font-size: 0.9rem; }
+  .field-bool input { width: auto; }
+
+  .pill {
+    display: inline-block; padding: 0.05rem 0.45rem; border-radius: 999px;
+    font-size: 0.66rem; font-weight: 600; letter-spacing: 0.02em; vertical-align: middle;
+    background: var(--warn-bg); color: var(--warn-fg); margin-left: 0.35rem;
+  }
+
+  .objlist { border-top: 1px solid var(--border); padding-top: 0.6rem; margin-top: 0.4rem; }
+  .obj-row, .nest-row {
+    border: 1px solid var(--border); border-radius: 8px; padding: 0.6rem 0.75rem;
+    margin-bottom: 0.6rem; background: var(--surface-alt);
+  }
+  .obj-fields { display: grid; grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr)); gap: 0.6rem; }
+  .obj-fields .field { border-top: 0; padding: 0.15rem 0; }
+  .obj-fields .field input, .obj-fields .field select { max-width: none; }
+  .nestedlist { margin-top: 0.6rem; padding-left: 0.5rem; border-left: 2px solid var(--border); }
+  .nestedlist .nl-title { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--fg-muted); }
+
+  button { font: inherit; cursor: pointer; }
+  .btn-add {
+    background: var(--surface); border: 1px dashed var(--border); color: var(--accent);
+    border-radius: 8px; padding: 0.4rem 0.8rem; font-weight: 500;
+  }
+  .btn-remove {
+    background: transparent; border: 0; color: var(--danger-fg); font-size: 0.8rem; float: right;
+  }
+
+  .savebar {
+    position: sticky; bottom: 0; margin-top: 1.5rem; padding: 0.8rem 1rem;
+    background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+    box-shadow: var(--shadow); display: flex; flex-wrap: wrap; align-items: center; gap: 0.75rem;
+  }
+  .btn-save {
+    background: var(--accent); color: #fff; border: 0; border-radius: 8px;
+    padding: 0.5rem 1.2rem; font-weight: 600;
+  }
+  .result { font-size: 0.88rem; }
+  .result.ok { color: var(--ok-fg); }
+  .result.err { color: var(--danger-fg); }
+  .token-field { margin-left: auto; display: flex; align-items: center; gap: 0.4rem; font-size: 0.82rem; color: var(--fg-muted); }
+  .token-field input { font: inherit; padding: 0.35rem 0.5rem; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-alt); color: var(--fg); }
+</style>
+{% endblock %}
+
+{# ---- a single scalar control; `attr` is the data-* name, `key` its value ---- #}
+{% macro control(f, value, attr, key) %}
+  {%- if f.kind == "bool" -%}
+    <input type="checkbox" {{ attr }}="{{ key }}"{% if value %} checked{% endif %}>
+  {%- elif f.kind == "enum" -%}
+    <select {{ attr }}="{{ key }}">
+      {%- if f.default is none %}<option value="">(inherit global)</option>{% endif -%}
+      {%- for c in f.choices -%}
+        <option value="{{ c }}"{% if value is not none and value|string == c %} selected{% endif %}>{{ c }}</option>
+      {%- endfor -%}
+    </select>
+  {%- elif f.kind in ("int", "int_or_null") -%}
+    <input type="number" {{ attr }}="{{ key }}"
+      value="{{ '' if value in (none, '') else value }}"
+      {% if f.minimum is not none %}min="{{ f.minimum }}"{% endif %}
+      {% if f.maximum is not none %}max="{{ f.maximum }}"{% endif %}
+      {% if f.kind == "int_or_null" %}placeholder="{{ 'disabled' if f.blank_writes_null else 'inherit / keep' }}"{% endif %}>
+  {%- elif f.kind == "secret_ref" -%}
+    <input type="text" {{ attr }}="{{ key }}" value="{{ value or '' }}" placeholder="ENV_VAR_NAME" autocomplete="off" spellcheck="false">
+  {%- else -%}
+    <input type="text" {{ attr }}="{{ key }}" value="{{ '' if value in (none,) else value }}"
+      {% if f.kind == "time_hhmm" %}placeholder="HH:MM"{% endif %}
+      {% if f.kind == "mac" %}placeholder="aa:bb:cc:dd:ee:ff"{% endif %}>
+  {%- endif -%}
+{% endmacro %}
+
+{# ---- a labelled scalar field rendered directly in a section ---- #}
+{% macro scalar_field(f, value) %}
+  {% if f.kind == "bool" %}
+  <div class="field field-bool">
+    <label>{{ control(f, value, "data-path", f.path) }} {{ f.label }}{% if f.restart_required %}<span class="pill">restart</span>{% endif %}</label>
+    <p class="field-desc">{{ f.description }}</p>
+  </div>
+  {% else %}
+  <div class="field">
+    <label class="field-label">{{ f.label }}{% if f.unit %} <span class="unit">({{ f.unit }})</span>{% endif %}{% if f.restart_required %}<span class="pill">restart</span>{% endif %}</label>
+    {{ control(f, value, "data-path", f.path) }}
+    <p class="field-desc">{{ f.description }}</p>
+  </div>
+  {% endif %}
+{% endmacro %}
+
+{# ---- a scalar-list field (allowlist, radios, cooldowns) as one-per-line textarea ---- #}
+{% macro list_field(f, values) %}
+  <div class="field">
+    <label class="field-label">{{ f.label }}{% if f.unit %} <span class="unit">({{ f.unit }})</span>{% endif %}</label>
+    <textarea data-listpath="{{ f.path }}" placeholder="one per line">{{ values | join("\n") }}</textarea>
+    <p class="field-desc">{{ f.description }}</p>
+  </div>
+{% endmacro %}
+
+{# ---- an item leaf input inside an object-list row (uses data-leaf) ---- #}
+{% macro item_field(f, leaf, value) %}
+  {% if f.kind == "bool" %}
+  <div class="field field-bool">
+    <label>{{ control(f, value, "data-leaf", leaf) }} {{ f.label }}{% if f.restart_required %}<span class="pill">restart</span>{% endif %}</label>
+  </div>
+  {% else %}
+  <div class="field">
+    <label class="field-label">{{ f.label }}{% if f.unit %} <span class="unit">({{ f.unit }})</span>{% endif %}{% if f.restart_required %}<span class="pill">restart</span>{% endif %}</label>
+    {{ control(f, value, "data-leaf", leaf) }}
+    <p class="field-desc">{{ f.description }}</p>
+  </div>
+  {% endif %}
+{% endmacro %}
+
+{# ---- one object-list row (existing row: pass its values; template row: pass {}) ---- #}
+{% macro object_row(spec, row) %}
+  <div class="obj-row">
+    <button type="button" class="btn-remove" data-remove>remove ✕</button>
+    <div class="obj-fields">
+      {% for f in schema.item_fields(spec.item_prefix) %}
+        {% set leaf = f.path[spec.item_prefix|length:] %}
+        {{ item_field(f, leaf, row.get(leaf)) }}
+      {% endfor %}
+    </div>
+    {% if spec.nested_key %}
+    <div class="nestedlist" data-nestedlist="{{ spec.nested_key }}">
+      <div class="nl-title">{{ spec.nested_key }}</div>
+      <div class="rows">
+        {% for nrow in row.get(spec.nested_key, []) %}{{ nested_row(spec, nrow) }}{% endfor %}
+      </div>
+      <template class="tmpl">{{ nested_row(spec, {}) }}</template>
+      <button type="button" class="btn-add" data-add>+ {{ spec.nested_add_label }}</button>
+    </div>
+    {% endif %}
+  </div>
+{% endmacro %}
+
+{% macro nested_row(spec, nrow) %}
+  <div class="nest-row">
+    <button type="button" class="btn-remove" data-remove>remove ✕</button>
+    <div class="obj-fields">
+      {% for f in schema.item_fields(spec.nested_prefix) %}
+        {% set leaf = f.path[spec.nested_prefix|length:] %}
+        {{ item_field(f, leaf, nrow.get(leaf)) }}
+      {% endfor %}
+    </div>
+  </div>
+{% endmacro %}
+
+{% block body %}
+<h1>Settings</h1>
+<p class="settings-intro">
+  Edit the daemon's configuration. Secrets (passwords, tokens) aren't typed here — you name the
+  environment variable that holds them. Most changes apply on the next scan; fields marked
+  <span class="pill">restart</span> take effect after a daemon restart.
+</p>
+
+{% if read_error %}
+<div class="banner err">Couldn't read the current config: {{ read_error }}. Saving will create a fresh file from what you enter below.</div>
+{% elif not model.config_exists %}
+<div class="banner info">No config file found yet — the form is pre-filled with defaults. Saving will create it.</div>
+{% endif %}
+
+<form id="settings-form" onsubmit="return false">
+  {% for sec in sections %}
+  <details class="sec"{% if sec.key in ("detection", "scanner") %} open{% endif %}>
+    <summary>{{ sec.label }}</summary>
+    <div class="sec-body">
+      <p class="sec-help">{{ sec.help }}</p>
+      {% for o in schema.optional_sections_for(sec.key) %}
+      <label class="field-bool section-enable">
+        <input type="checkbox" data-section-enable="{{ o.path }}"{% if model.section_enabled.get(o.path) %} checked{% endif %}>
+        <strong>{{ o.label }}</strong>
+      </label>
+      {% endfor %}
+      {% for f in schema.scalar_fields_for_section(sec.key) %}
+        {{ scalar_field(f, model.scalars.get(f.path)) }}
+      {% endfor %}
+      {% for f in schema.scalar_list_fields_for_section(sec.key) %}
+        {{ list_field(f, model.scalar_lists.get(f.path, [])) }}
+      {% endfor %}
+      {% for spec in schema.object_lists_for_section(sec.key) %}
+      <div class="objlist" data-objlist="{{ spec.key }}">
+        <div class="rows">
+          {% for row in model.object_lists.get(spec.key, []) %}{{ object_row(spec, row) }}{% endfor %}
+        </div>
+        <template class="tmpl">{{ object_row(spec, {}) }}</template>
+        <button type="button" class="btn-add" data-add>+ {{ spec.add_label }}</button>
+      </div>
+      {% endfor %}
+    </div>
+  </details>
+  {% endfor %}
+
+  <div class="savebar">
+    <button type="button" class="btn-save" id="save-btn">Save changes</button>
+    <span class="result" id="save-result"></span>
+    {% if auth_required %}
+    <label class="token-field">admin token
+      <input type="password" id="admin-token" autocomplete="off" placeholder="required to save">
+    </label>
+    {% endif %}
+  </div>
+</form>
+
+<script>
+(function () {
+  // ---- add / remove rows (event delegation; works for cloned templates too) ----
+  document.addEventListener("click", function (e) {
+    var t = e.target;
+    if (t.matches("[data-add]")) {
+      var scope = t.closest("[data-nestedlist], [data-objlist]");
+      var tmpl = scope.querySelector(":scope > template.tmpl");
+      var rows = scope.querySelector(":scope > .rows");
+      rows.appendChild(tmpl.content.cloneNode(true));
+    } else if (t.matches("[data-remove]")) {
+      t.closest(".obj-row, .nest-row").remove();
+    }
+  });
+
+  function inputValue(el) {
+    return el.type === "checkbox" ? el.checked : el.value;
+  }
+
+  function collectRow(rowEl) {
+    var obj = {};
+    rowEl.querySelectorAll(":scope > .obj-fields [data-leaf]").forEach(function (el) {
+      obj[el.dataset.leaf] = inputValue(el);
+    });
+    var nl = rowEl.querySelector(":scope > .nestedlist");
+    if (nl) {
+      var arr = [];
+      nl.querySelectorAll(":scope > .rows > .nest-row").forEach(function (nr) {
+        var o = {};
+        nr.querySelectorAll(":scope > .obj-fields [data-leaf]").forEach(function (el) {
+          o[el.dataset.leaf] = inputValue(el);
+        });
+        arr.push(o);
+      });
+      obj[nl.dataset.nestedlist] = arr;
+    }
+    return obj;
+  }
+
+  function collectPayload() {
+    var scalars = {};
+    document.querySelectorAll("#settings-form [data-path]").forEach(function (el) {
+      scalars[el.dataset.path] = inputValue(el);
+    });
+    var scalarLists = {};
+    document.querySelectorAll("#settings-form [data-listpath]").forEach(function (el) {
+      scalarLists[el.dataset.listpath] = el.value.split("\n").map(function (s) {
+        return s.trim();
+      }).filter(Boolean);
+    });
+    var objectLists = {};
+    document.querySelectorAll("#settings-form [data-objlist]").forEach(function (ol) {
+      var rows = [];
+      ol.querySelectorAll(":scope > .rows > .obj-row").forEach(function (r) {
+        rows.push(collectRow(r));
+      });
+      objectLists[ol.dataset.objlist] = rows;
+    });
+    var sectionEnabled = {};
+    document.querySelectorAll("#settings-form [data-section-enable]").forEach(function (el) {
+      sectionEnabled[el.dataset.sectionEnable] = el.checked;
+    });
+    return {
+      scalars: scalars,
+      scalar_lists: scalarLists,
+      object_lists: objectLists,
+      section_enabled: sectionEnabled,
+    };
+  }
+
+  var btn = document.getElementById("save-btn");
+  var out = document.getElementById("save-result");
+  btn.addEventListener("click", function () {
+    var headers = { "Content-Type": "application/json" };
+    var tok = document.getElementById("admin-token");
+    if (tok && tok.value) headers["Authorization"] = "Bearer " + tok.value;
+    out.className = "result";
+    out.textContent = "Saving…";
+    fetch("/settings", { method: "POST", headers: headers, body: JSON.stringify(collectPayload()) })
+      .then(function (res) {
+        return res.json().catch(function () { return {}; }).then(function (data) {
+          return { status: res.status, ok: res.ok, data: data };
+        });
+      })
+      .then(function (r) {
+        if (r.ok && r.data.ok) {
+          out.className = "result ok";
+          out.textContent = "✓ " + (r.data.message || "Saved.");
+        } else if (r.status === 401) {
+          out.className = "result err";
+          out.textContent = "Unauthorized — enter your admin token to save.";
+        } else {
+          out.className = "result err";
+          out.textContent = "✕ " + (r.data.error || ("Save failed (HTTP " + r.status + ")"));
+        }
+      })
+      .catch(function (err) {
+        out.className = "result err";
+        out.textContent = "✕ " + err;
+      });
+  });
+})();
+</script>
+{% endblock %}
