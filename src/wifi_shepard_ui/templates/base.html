@@ -292,11 +292,12 @@
 <body>
 <header class="topbar">
   <div class="topbar-inner">
-    <div class="brand">wifi-shepard <span>· read-only</span></div>
+    <div class="brand">wifi-shepard</div>
     <nav>
       <a href="/"{% if active_page == "overview" %} class="active"{% endif %}>Overview</a>
       <a href="/devices"{% if active_page == "devices" %} class="active"{% endif %}>Devices</a>
       <a href="/dns"{% if active_page == "dns" %} class="active"{% endif %}>DNS</a>
+      <a href="/settings"{% if active_page == "settings" %} class="active"{% endif %}>Settings</a>
     </nav>
   </div>
 </header>

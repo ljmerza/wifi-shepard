@@ -8,8 +8,15 @@ Built around a brand-agnostic `Controller` interface (UniFi first; Omada /
 OpenWRT / Ruckus / Aruba slot in as new backends). The full v1 spec — detection
 rules, backoff schedule, roadmap — lives in [`PLAN.md`](./PLAN.md).
 
-A read-only HTTP UI sidecar (`wifi-shepard-ui`) renders device history and a
-WiFi status overview from the daemon's SQLite state.
+An HTTP UI sidecar (`wifi-shepard-ui`) renders device history and a WiFi status
+overview from the daemon's SQLite state, and — via a **Settings** page
+([ADR-0013](./docs/adr/0013-settings-ui-write-paths.md)) — lets you edit the
+daemon's whole configuration in the browser, with a plain-English explanation on
+every threshold. Secrets are never typed in the UI: you name the environment
+variable that holds each one (e.g. `UNIFI_PASSWORD`) and the daemon resolves it.
+Saved changes are validated with the daemon's own parser, written back to
+`config.yaml`, and hot-reloaded (no restart) for anything but connection/
+notification wiring.
 
 ## Get started
 
@@ -24,9 +31,9 @@ cp wifi-shepard-ui.env.example wifi-shepard-ui.env
 
 Edit:
 
-- `config.yaml` — controller credentials, allowlist, detection thresholds. Keep `scanner.dry_run: true` until you have watched the logs for a poll cycle or two.
-- `wifi-shepard.env` — `UNIFI_PASSWORD` (required), `HA_TOKEN` (optional).
-- `wifi-shepard-ui.env` — `WIFI_SHEPARD_UI_TOKEN` (bearer token; unset to disable auth), `WIFI_SHEPARD_UI_REFRESH_SECONDS` (overview auto-refresh interval, default 60s; 0 disables).
+- `config.yaml` — controller connection (non-secret fields are plain literals now), allowlist, detection thresholds. Keep `scanner.dry_run: true` until you have watched the logs for a poll cycle or two. Once running, most of this is editable from the UI's **Settings** page instead of by hand.
+- `wifi-shepard.env` — **secrets only**: `UNIFI_PASSWORD` (required), `HA_TOKEN` / `PIHOLE_PASSWORD` (optional). Non-secret UniFi fields (host/username/site/port) live in `config.yaml`.
+- `wifi-shepard-ui.env` — `WIFI_SHEPARD_UI_TOKEN` (bearer token; unset to disable auth — **set it before exposing the UI, since Settings can now write config**), `WIFI_SHEPARD_UI_REFRESH_SECONDS` (overview auto-refresh interval, default 60s; 0 disables).
 
 ### 2. Pull or build the images
 
@@ -67,8 +74,12 @@ Standalone (outside the monorepo) — copy the service blocks out of
 `*default-logging` anchor with whatever logging driver you want, and run
 `docker compose up -d`.
 
-The daemon writes its SQLite state to `/data/state.db` (mount as a volume).
-The UI sidecar mounts the same volume read-only and serves on port 8080.
+The daemon writes its SQLite state to `/data/state.db` (mount as a volume) and
+reads `/config/config.yaml`. The UI sidecar mounts the state volume read-only and
+the config directory read-write (so the Settings page can save), and serves on
+port 8080. The config is mounted as a **directory** (not a single file) so the
+daemon's file-watch reload sees edits — a single-file bind mount pins the inode and
+misses atomic rewrites.
 
 ## Local development
 

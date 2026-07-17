@@ -1,4 +1,8 @@
-"""AC-6: src/wifi_shepard_ui/ contains zero write-route decorators."""
+"""ADR-0002 AC-6, as amended by ADR-0013: src/wifi_shepard_ui/ contains no write-route
+decorators EXCEPT the single settings save route (`@app.post("/settings")`). Every other
+route stays GET-only — the read-only guarantee is narrowed to a one-path allowlist, not
+lifted.
+"""
 
 from __future__ import annotations
 
@@ -16,31 +20,41 @@ WRITE_VERB_RE = re.compile(
     re.IGNORECASE,
 )
 
-
 GET_VERB_RE = re.compile(r"@[A-Za-z_]\w*\.get\s*\(")
 
+# The one write route ADR-0013 permits: the settings save endpoint.
+ALLOWED_WRITE_RE = re.compile(r"""@[A-Za-z_]\w*\.post\s*\(\s*["']/settings["']\s*\)""")
 
-def test_ac_6_no_write_route_decorators_in_ui_source() -> None:
+
+def test_ac_6_only_settings_write_route_in_ui_source() -> None:
     assert UI_SRC.is_dir(), f"{UI_SRC} must exist"
 
     write_matches: list[str] = []
     has_any_get_route = False
+    saw_allowed_settings_post = False
     for py_file in sorted(UI_SRC.rglob("*.py")):
         text = py_file.read_text()
         if GET_VERB_RE.search(text):
             has_any_get_route = True
         for lineno, line in enumerate(text.splitlines(), start=1):
             if WRITE_VERB_RE.search(line):
+                if ALLOWED_WRITE_RE.search(line):
+                    saw_allowed_settings_post = True
+                    continue
                 write_matches.append(f"{py_file.relative_to(REPO_ROOT)}:{lineno}: {line.strip()}")
 
-    # Sanity: AC-6 is a guardrail — it's only meaningful once the UI defines
-    # routes. Without GET routes, the negative assertion is vacuous.
     assert has_any_get_route, (
-        "AC-6 sanity check: src/wifi_shepard_ui/ must define at least one GET route "
+        "sanity check: src/wifi_shepard_ui/ must define at least one GET route "
         "for the no-write-routes guarantee to be meaningful"
     )
 
     assert not write_matches, (
-        "v1 sidecar must be read-only — found write-route decorators:\n  "
-        + "\n  ".join(write_matches)
+        "sidecar must be read-only outside the settings save route — found other "
+        "write-route decorators:\n  " + "\n  ".join(write_matches)
+    )
+
+    # Guards against this test silently going stale: the amended allowlist route
+    # must actually be present.
+    assert saw_allowed_settings_post, (
+        'expected the ADR-0013 settings save route @app.post("/settings") in the UI source'
     )

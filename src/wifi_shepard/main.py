@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
 import logging
 import signal
 from datetime import datetime
@@ -32,6 +33,7 @@ class Daemon:
         ha: Notifier | None = None,
         rebooter: Rebooter | None = None,
         registry: HADeviceRegistry | None = None,
+        config_watch_interval_seconds: float = 5.0,
     ) -> None:
         self.config_path = Path(config_path)
         self.db_path = Path(db_path)
@@ -64,6 +66,13 @@ class Daemon:
         self.config_reload_attempted = asyncio.Event()
         self._shutdown = asyncio.Event()
         self.exit_code = 0
+        # ADR-0013 Phase 0: file-watch reload. SIGHUP is unreliable in the
+        # container (uv is PID 1 and doesn't forward it; a single-file bind
+        # mount pins the old inode across an atomic rewrite), so a content-hash
+        # poll is the primary reload trigger. Seed the seen-digest from the file
+        # we just loaded so the first change — not the initial state — reloads.
+        self._config_watch_interval = config_watch_interval_seconds
+        self._config_digest_seen = self._config_digest()
 
     def _build_scheduler(self) -> RebootScheduler | None:
         # ADR-0006 AC-10: no scheduler task unless reboot + proactive are both on.
@@ -133,6 +142,7 @@ class Daemon:
         loop.add_signal_handler(signal.SIGHUP, self._on_sighup)
         loop.add_signal_handler(signal.SIGTERM, self._on_sigterm)
         scheduler_task: asyncio.Task[None] | None = None
+        watch_task: asyncio.Task[None] | None = None
         try:
             await self.db.connect()
             for controller in self.controllers:
@@ -144,6 +154,9 @@ class Daemon:
             self._scanners = self._build_scanners()
             if self._scheduler is not None:
                 scheduler_task = asyncio.create_task(self._run_scheduler())
+            # ADR-0013 Phase 0: start the config file-watch only after scanners
+            # exist, so a reload firing on its first tick has them to retune.
+            watch_task = asyncio.create_task(self._watch_config())
             first = True
             while not self._shutdown.is_set():
                 for scanner in self._scanners:
@@ -171,6 +184,10 @@ class Daemon:
                 scheduler_task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await scheduler_task
+            if watch_task is not None:
+                watch_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await watch_task
             for sig in (signal.SIGHUP, signal.SIGTERM):
                 try:
                     loop.remove_signal_handler(sig)
@@ -193,7 +210,26 @@ class Daemon:
                 except Exception:
                     logger.exception("ha_close_failed")
 
-    def _on_sighup(self) -> None:
+    def _config_digest(self) -> str | None:
+        """SHA-256 of the config file's bytes, or None if it can't be read.
+
+        None (file transiently absent during an atomic rename, or unreadable) is
+        treated as 'no change' so the watch loop skips the tick rather than
+        reloading a phantom edit. A rename is atomic, so a successful read always
+        returns a whole file (old or new), never a truncated one.
+        """
+        try:
+            return hashlib.sha256(self.config_path.read_bytes()).hexdigest()
+        except OSError:
+            return None
+
+    def _reload_config(self) -> bool:
+        """Re-read config from disk and apply it in place; return True on success.
+
+        Shared by the SIGHUP handler and the file-watch task. A parse/validation
+        failure logs config_reload_failed and keeps the last-good config — the
+        daemon never half-applies a broken edit (fail-closed, PLAN.md §5).
+        """
         try:
             new_config = load_config_from_path(self.config_path)
         except Exception:
@@ -201,7 +237,7 @@ class Daemon:
                 "config_reload_failed",
                 extra={"path": str(self.config_path)},
             )
-            return
+            return False
         finally:
             self.config_reload_attempted.set()
         self.config = new_config
@@ -213,6 +249,36 @@ class Daemon:
         if self._scheduler is not None:
             self._scheduler.update_config(new_config)
         self.config_reloaded.set()
+        return True
+
+    async def _watch_config(self) -> None:
+        """Poll the config file for content changes and hot-reload on change.
+
+        ADR-0013 Phase 0: the primary reload mechanism. In the container PID 1 is
+        `uv run`, which does not forward SIGHUP to the daemon child, and a
+        single-file bind mount pins the old inode across an atomic rewrite — so
+        SIGHUP alone never sees an edit. Mount the config *directory* (not the
+        file) so a rewrite's new inode is visible here. A transient read error
+        (file mid-rename) is skipped, never fatal; a parse failure keeps the
+        last-good config via _reload_config.
+        """
+        while not self._shutdown.is_set():
+            try:
+                await asyncio.wait_for(self._shutdown.wait(), timeout=self._config_watch_interval)
+            except TimeoutError:
+                pass
+            if self._shutdown.is_set():
+                break
+            digest = self._config_digest()
+            if digest is not None and digest != self._config_digest_seen:
+                # Record the seen digest before reloading so a config that fails
+                # to parse isn't retried every tick — the next *edit* (new
+                # digest) is what re-arms the reload.
+                self._config_digest_seen = digest
+                self._reload_config()
+
+    def _on_sighup(self) -> None:
+        self._reload_config()
 
     def _on_sigterm(self) -> None:
         self.shutdown()
@@ -229,6 +295,7 @@ def build_daemon(
     ha: Notifier | None = None,
     rebooter: Rebooter | None = None,
     registry: HADeviceRegistry | None = None,
+    config_watch_interval_seconds: float = 5.0,
 ) -> Daemon:
     return Daemon(
         config_path=config_path,
@@ -237,4 +304,5 @@ def build_daemon(
         ha=ha,
         rebooter=rebooter,
         registry=registry,
+        config_watch_interval_seconds=config_watch_interval_seconds,
     )

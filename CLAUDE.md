@@ -10,7 +10,7 @@ Built around a brand-agnostic `Controller` interface — UniFi first; Omada / Op
 
 ## Status & Source of Truth
 
-**v1 in progress** — the core daemon is implemented and tested (scanner → scorer → actor, dry-run gate, UniFi backend, SQLite, SIGHUP/SIGTERM); a read-only UI sidecar (ADR-0002) ships alongside it. See [`docs/adr/0000-adr-index.md`](./docs/adr/0000-adr-index.md) for what's shipped vs. still open.
+**v1 in progress** — the core daemon is implemented and tested (scanner → scorer → actor, dry-run gate, UniFi backend, SQLite, SIGHUP/SIGTERM + config file-watch reload); a UI sidecar (ADR-0002) ships alongside it with read-only history/overview pages **plus a Settings page (ADR-0013) that edits the whole config** — env-var-reference secrets, daemon-validated saves, hot-reload. See [`docs/adr/0000-adr-index.md`](./docs/adr/0000-adr-index.md) for what's shipped vs. still open.
 
 For *what's built*, the code and the ADR index are the source of truth. [`PLAN.md`](./PLAN.md) remains the reference for the full v1 spec — detection rules, backoff schedule, config shape, roadmap — but where it diverges from the code, the code wins. Known open gaps are tracked in the ADRs (e.g. the concrete HA reboot executor + device-registry client, ADR-0005/0006).
 
@@ -62,7 +62,10 @@ projects/wifi-shepard/
 │   │   ├── notify/               # Notifier Protocol + HA REST backend (home_assistant.py)
 │   │   ├── controllers/          # base.py Protocol, unifi.py, __init__.py factory
 │   │   └── reboot/               # ADR-0005/0006: eligibility, ha_resolver, cooldown, scheduler, rebooter
-│   └── wifi_shepard_ui/          # ADR-0002 read-only sidecar (FastAPI app, views, templates)
+│   └── wifi_shepard_ui/          # UI sidecar (FastAPI): views/templates (ADR-0002 read-only)
+│                                 #   + settings_schema.py (per-field metadata + descriptions),
+│                                 #   config_io.py (read/validate/round-trip-write config.yaml),
+│                                 #   settings.html + GET/POST /settings (ADR-0013 write path)
 ├── tests/                        # pytest; AC-named (`test_*_acN.py`); `tests/ui/` for the sidecar
 └── .github/workflows/            # CI: pytest + docker build (daemon + UI), release to GHCR
 ```
@@ -83,10 +86,10 @@ The scanner / scorer / actor never know which vendor they're talking to. New bac
 
 ## Configuration & Secrets
 
-- Config file: YAML mounted at `/config/config.yaml` (read at startup, re-read on `SIGHUP`).
+- Config file: YAML mounted at `/config/config.yaml` (read at startup; re-read on `SIGHUP` **and** on a content change via the daemon's file-watch — ADR-0013, which is the reliable path in the container). Mount the config **directory**, not the single file, or atomic rewrites (new inode) are missed. Editable by hand or from the UI's Settings page.
 - Schema: see `PLAN.md` §7. Global `detection:` defaults plus per-MAC `overrides:` — resolution is **per-MAC override > global default**, applied uniformly to every threshold.
 - Allowlist (`allowlist:`) — MACs in this list are never kicked.
-- Secrets in env vars, never in repo: `UNIFI_PASSWORD`, `HA_TOKEN`. Loaded from `./env/wifi-shepard.env` and interpolated into the YAML at parse time (`${VAR}` syntax).
+- Secrets in env vars, never in repo: `UNIFI_PASSWORD`, `HA_TOKEN`, `PIHOLE_PASSWORD`. Loaded from `./env/wifi-shepard.env` and interpolated into the YAML at parse time (`${VAR}` syntax). The Settings UI references a secret by its env-var **name** (storing `${NAME}`) and never sees the value. Non-secret connection fields (UniFi host/username/site/port) are plain literals in `config.yaml`, not env vars (ADR-0013).
 - Fail closed: invalid config → log a clear error and exit. Never half-run.
 
 ## Deployment in the docker monorepo
