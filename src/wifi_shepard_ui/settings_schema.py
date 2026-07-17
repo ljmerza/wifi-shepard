@@ -1061,15 +1061,15 @@ FIELDS: tuple[FieldSpec, ...] = (
     ),
     FieldSpec(
         path="dns_sources[].password",
-        label="Pi-hole password (env var name)",
+        label="Shared password default (env var name)",
         kind=Kind.SECRET_REF,
         section="dns_sources",
         secret=True,
         restart_required=True,
         description=(
-            "The Pi-hole admin/API password. You do NOT type it here — name the environment "
-            "variable that holds it (for example PIHOLE_PASSWORD). One password is shared across "
-            "all instances in this source."
+            "Optional. A default admin/API password used by any Pi-hole below that doesn't set its "
+            "own. You do NOT type it here — name the environment variable that holds it (for "
+            "example PIHOLE_PASSWORD). Leave blank if every Pi-hole has its own password."
         ),
     ),
     FieldSpec(
@@ -1081,6 +1081,19 @@ FIELDS: tuple[FieldSpec, ...] = (
         description=(
             "One Pi-hole's address, for example http://192.168.1.186. Add one entry per Pi-hole a "
             "device might use for lookups."
+        ),
+    ),
+    FieldSpec(
+        path="dns_sources[].instances[].password",
+        label="This Pi-hole's password (env var name)",
+        kind=Kind.SECRET_REF,
+        section="dns_sources",
+        secret=True,
+        restart_required=True,
+        description=(
+            "This Pi-hole's own admin/API password, when it differs from the others. You do NOT "
+            "type it here — name the environment variable that holds it (for example "
+            "PIHOLE_GYM_PASSWORD). Leave blank to use the shared default above."
         ),
     ),
 )

@@ -45,13 +45,26 @@ home_assistant:
 # List every Pi-hole a client might use as a resolver — a client's queries can land
 # entirely on one instance, so they are merged. Clients with a HARDCODED upstream
 # resolver (8.8.8.8 etc.) bypass Pi-hole and are invisible to this signal; point a
-# device you want watched at Pi-hole. The password is env-interpolated, never in repo.
+# device you want watched at Pi-hole. Passwords are env-interpolated, never in repo.
+#
+# Password can be set per-instance OR as a source-level default. The source-level
+# `password:` (optional) is the fallback for any instance that doesn't set its own;
+# an instance `password:` overrides it. Every instance must resolve to one or the
+# other (else it fails closed at parse time). Same shared password for both:
 # dns_sources:
 #   - type: pihole
-#     password: ${PIHOLE_PASSWORD}
+#     password: ${PIHOLE_PASSWORD}          # shared default for both instances
 #     instances:
 #       - url: http://192.168.1.186
 #       - url: http://192.168.1.189
+# Different password per Pi-hole:
+# dns_sources:
+#   - type: pihole
+#     instances:
+#       - url: http://192.168.1.186
+#         password: ${PIHOLE_GYM_PASSWORD}
+#       - url: http://192.168.1.189
+#         password: ${PIHOLE_BONUS_PASSWORD}
 
 scanner:
   poll_interval_seconds: 60

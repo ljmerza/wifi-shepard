@@ -4,6 +4,12 @@
 **Date:** 2026-07-15
 **Author:** Leonardo Merza
 
+> **Amendment (2026-07-16):** the shared per-source password is now the *optional*
+> fallback for **per-instance passwords** — each `dns_sources[].instances[]` may set its
+> own `password: ${VAR}`, resolved as `instance password → else source password`. Every
+> instance must still resolve to a non-empty password (fail-closed). Backward compatible:
+> a source-level password with password-less instances behaves exactly as before.
+
 ## Context
 
 ### Background

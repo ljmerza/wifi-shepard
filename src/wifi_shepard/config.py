@@ -358,15 +358,21 @@ class ControllerSpec:
 class DnsInstanceSpec:
     # ADR-0011: one Pi-hole instance. Clients may use either of two resolvers, so a
     # source lists several instances and the merged source concatenates them.
+    # password (repr-suppressed): a per-instance override; when None the instance
+    # authenticates with the source-level password. Every instance must resolve to a
+    # non-empty password (validated in _build_dns_sources).
     url: str
+    password: str | None = field(default=None, repr=False)
 
 
 @dataclass(frozen=True)
 class DnsSourceSpec:
     # ADR-0011: an optional DNS data source (Pi-hole v6 first). password is
-    # repr-suppressed for the same reason as ControllerSpec.password.
+    # repr-suppressed for the same reason as ControllerSpec.password. It is now the
+    # OPTIONAL source-level default — instances that don't set their own use it
+    # (per-instance password support). None when every instance sets its own.
     type: str
-    password: str = field(repr=False)
+    password: str | None = field(default=None, repr=False)
     instances: tuple[DnsInstanceSpec, ...] = ()
 
 
@@ -476,9 +482,11 @@ def _build_dns_thrash(raw: Mapping[str, Any] | None) -> DnsThrashConfig | None:
 
 
 def _build_dns_sources(raw: Any) -> tuple[DnsSourceSpec, ...]:
-    """Parse + validate the top-level dns_sources: list (ADR-0011). Fail-closed:
-    unknown type, missing/empty password, or a bad instance url all raise at parse
-    time. Absent / empty → () (feature off)."""
+    """Parse + validate the top-level dns_sources: list (ADR-0011, per-instance
+    passwords). Fail-closed: unknown type, a bad instance url, or an instance with no
+    resolvable password (neither its own nor a source-level default) all raise at parse
+    time. The source-level password is now OPTIONAL — the fallback for instances that
+    don't set their own. Absent / empty → () (feature off)."""
     items = _require_mapping_items(_require_sequence(raw, "dns_sources"), "dns_sources")
     specs: list[DnsSourceSpec] = []
     for i, item in enumerate(items):
@@ -488,11 +496,11 @@ def _build_dns_sources(raw: Any) -> tuple[DnsSourceSpec, ...]:
                 f"dns_sources[{i}].type must be one of {sorted(_VALID_DNS_SOURCE_TYPES)}; "
                 f"got {source_type!r}"
             )
-        password = item.get("password")
-        if not isinstance(password, str) or not password:
-            raise ValueError(
-                f"dns_sources[{i}].password is required and must be a non-empty string"
-            )
+        source_password = item.get("password")
+        if source_password is not None and (
+            not isinstance(source_password, str) or not source_password
+        ):
+            raise ValueError(f"dns_sources[{i}].password, when set, must be a non-empty string")
         instance_items = _require_mapping_items(
             _require_sequence(item.get("instances"), f"dns_sources[{i}].instances"),
             f"dns_sources[{i}].instances",
@@ -511,11 +519,27 @@ def _build_dns_sources(raw: Any) -> tuple[DnsSourceSpec, ...]:
                     f"dns_sources[{i}].instances[{j}].url must start with http:// or https://; "
                     f"got {url!r}"
                 )
-            instances.append(DnsInstanceSpec(url=url))
+            inst_password = inst.get("password")
+            if inst_password is not None and (
+                not isinstance(inst_password, str) or not inst_password
+            ):
+                raise ValueError(
+                    f"dns_sources[{i}].instances[{j}].password, when set, must be a non-empty "
+                    f"string"
+                )
+            # Every instance must resolve to some password (its own, else the source
+            # default), or it can never authenticate — fail closed rather than ship a
+            # source that 401s on every poll.
+            if not (inst_password or source_password):
+                raise ValueError(
+                    f"dns_sources[{i}].instances[{j}] ({url}) has no password: set an instance "
+                    f"password or a source-level dns_sources[{i}].password default"
+                )
+            instances.append(DnsInstanceSpec(url=url, password=inst_password))
         specs.append(
             DnsSourceSpec(
                 type=str(source_type),
-                password=password,
+                password=source_password,
                 instances=tuple(instances),
             )
         )
