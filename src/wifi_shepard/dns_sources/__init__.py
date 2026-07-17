@@ -27,11 +27,16 @@ __all__ = [
 
 
 def build_dns_source_from_spec(spec: DnsSourceSpec) -> list[DnsSource]:
-    """One config spec -> one ``DnsSource`` per instance (all sharing the spec's
-    password). Unknown type fails closed."""
+    """One config spec -> one ``DnsSource`` per instance. Each instance authenticates
+    with its own password, falling back to the source-level default (config validation
+    guarantees one of the two is set). Unknown type fails closed."""
     if spec.type == "pihole":
         return [
-            PiholeSource(url=inst.url, password=spec.password, name=f"pihole@{inst.url}")
+            PiholeSource(
+                url=inst.url,
+                password=inst.password or spec.password,
+                name=f"pihole@{inst.url}",
+            )
             for inst in spec.instances
         ]
     raise ValueError(f"unknown dns source type: {spec.type!r}")

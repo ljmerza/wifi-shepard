@@ -101,14 +101,54 @@ dns_sources:
 
 
 def test_missing_password_fails_closed(tmp_path):
+    # ADR-0011 (per-instance passwords): the source password is now optional, but an
+    # instance with neither its own password nor a source-level default still fails
+    # closed rather than shipping a source that 401s on every poll.
     body = """
 dns_sources:
   - type: pihole
     instances:
       - url: http://x
 """
-    with pytest.raises(ValueError, match=r"dns_sources\[0\]\.password is required"):
+    with pytest.raises(ValueError, match=r"dns_sources\[0\]\.instances\[0\].*has no password"):
         load_config_from_path(_write(tmp_path, body))
+
+
+def test_per_instance_password_overrides_and_source_is_optional(tmp_path):
+    # A source with no source-level password is valid when every instance sets its own.
+    body = """
+dns_sources:
+  - type: pihole
+    instances:
+      - url: http://gym
+        password: gym-pw
+      - url: http://bonus
+        password: bonus-pw
+"""
+    cfg = load_config_from_path(_write(tmp_path, body))
+    src = cfg.dns_sources[0]
+    assert src.password is None
+    assert src.instances[0].password == "gym-pw"
+    assert src.instances[1].password == "bonus-pw"
+
+
+def test_source_password_is_the_instance_fallback(tmp_path):
+    # The backward-compatible shape: one source-level password, instances inherit it,
+    # and an instance may still override.
+    body = """
+dns_sources:
+  - type: pihole
+    password: shared-pw
+    instances:
+      - url: http://gym
+      - url: http://bonus
+        password: bonus-pw
+"""
+    cfg = load_config_from_path(_write(tmp_path, body))
+    src = cfg.dns_sources[0]
+    assert src.password == "shared-pw"
+    assert src.instances[0].password is None  # inherits the source default at build time
+    assert src.instances[1].password == "bonus-pw"
 
 
 def test_instance_without_url_fails_closed(tmp_path):
