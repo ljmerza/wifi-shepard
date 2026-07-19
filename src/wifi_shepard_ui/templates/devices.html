@@ -2,29 +2,68 @@
 {% block title %}Devices — wifi-shepard{% endblock %}
 {% block body %}
 <h1>Devices</h1>
-{% if rows %}
+{% if total %}
 <div class="card">
   <div class="card-head">
-    <h2>{{ rows | length }} tracked device{{ "" if rows | length == 1 else "s" }}</h2>
+    {% if filtered %}
+    <h2>{{ rows | length }} of {{ total }} device{{ "" if total == 1 else "s" }}</h2>
+    <span class="card-note"><a href="{{ qs(params, state='', kicked_within='', allowlist='', q='') }}">Clear filters</a> · Sorted by {{ sort }}</span>
+    {% else %}
+    <h2>{{ total }} tracked device{{ "" if total == 1 else "s" }}</h2>
     <span class="card-note">Sorted by {{ sort }}</span>
+    {% endif %}
   </div>
+  <div class="filter-bar" role="group" aria-label="Filter devices">
+    <div class="filter-row">
+      <span class="filter-label">State</span>
+      <a href="{{ qs(params, state='') }}"{% if not state %} class="on"{% endif %}>All</a>
+      <a href="{{ qs(params, state='normal') }}"{% if state == "normal" %} class="on"{% endif %}>Normal</a>
+      <a href="{{ qs(params, state='kicked') }}"{% if state == "kicked" %} class="on"{% endif %}>Kicked</a>
+      <a href="{{ qs(params, state='evaluating') }}"{% if state == "evaluating" %} class="on"{% endif %}>Evaluating</a>
+      <a href="{{ qs(params, state='quarantine') }}"{% if state == "quarantine" %} class="on"{% endif %}>Quarantine</a>
+    </div>
+    <div class="filter-row">
+      <span class="filter-label">Kicked</span>
+      <a href="{{ qs(params, kicked_within='') }}"{% if not kicked_within %} class="on"{% endif %}>Any time</a>
+      <a href="{{ qs(params, kicked_within='24h') }}"{% if kicked_within == "24h" %} class="on"{% endif %}>Last 24h</a>
+      <a href="{{ qs(params, kicked_within='7d') }}"{% if kicked_within == "7d" %} class="on"{% endif %}>Last 7 days</a>
+      <a href="{{ qs(params, kicked_within='30d') }}"{% if kicked_within == "30d" %} class="on"{% endif %}>Last 30 days</a>
+      <a href="{{ qs(params, kicked_within='never') }}"{% if kicked_within == "never" %} class="on"{% endif %}>Never</a>
+    </div>
+    <div class="filter-row">
+      <span class="filter-label">Allowlist</span>
+      <a href="{{ qs(params, allowlist='') }}"{% if not allowlist %} class="on"{% endif %}>All</a>
+      <a href="{{ qs(params, allowlist='yes') }}"{% if allowlist == "yes" %} class="on"{% endif %}>Allowlisted</a>
+      <a href="{{ qs(params, allowlist='no') }}"{% if allowlist == "no" %} class="on"{% endif %}>Not allowlisted</a>
+    </div>
+    <form class="filter-row filter-search" method="get" action="/devices">
+      {% if params.sort %}<input type="hidden" name="sort" value="{{ params.sort }}">{% endif %}
+      {% if state %}<input type="hidden" name="state" value="{{ state }}">{% endif %}
+      {% if kicked_within %}<input type="hidden" name="kicked_within" value="{{ kicked_within }}">{% endif %}
+      {% if allowlist %}<input type="hidden" name="allowlist" value="{{ allowlist }}">{% endif %}
+      <label class="filter-label" for="device-q">Search</label>
+      <input type="search" id="device-q" name="q" value="{{ q }}" placeholder="name or MAC">
+      <button type="submit">Go</button>
+    </form>
+  </div>
+  {% if rows %}
   <div class="sort-bar" role="group" aria-label="Sort devices">
     <span class="sort-bar-label">Sort</span>
-    <a href="?sort=name"{% if sort == "name" %} class="on"{% endif %}>Name</a>
-    <a href="?sort=mac"{% if sort == "mac" %} class="on"{% endif %}>MAC</a>
-    <a href="?sort=kicks"{% if sort == "kicks" %} class="on"{% endif %}>Kicks</a>
-    <a href="?sort=last_bad"{% if sort == "last_bad" %} class="on"{% endif %}>Last kick</a>
-    <a href="?sort=state"{% if sort == "state" %} class="on"{% endif %}>State</a>
+    <a href="{{ qs(params, sort='name') }}"{% if sort == "name" %} class="on"{% endif %}>Name</a>
+    <a href="{{ qs(params, sort='mac') }}"{% if sort == "mac" %} class="on"{% endif %}>MAC</a>
+    <a href="{{ qs(params, sort='kicks') }}"{% if sort == "kicks" %} class="on"{% endif %}>Kicks</a>
+    <a href="{{ qs(params, sort='last_bad') }}"{% if sort == "last_bad" %} class="on"{% endif %}>Last kick</a>
+    <a href="{{ qs(params, sort='state') }}"{% if sort == "state" %} class="on"{% endif %}>State</a>
   </div>
   <div class="table-wrap">
     <table data-sortable="true">
       <thead>
         <tr>
-          <th><a href="?sort=name">Name</a></th>
-          <th><a href="?sort=mac">MAC</a></th>
-          <th><a href="?sort=kicks">Kicks</a></th>
-          <th><a href="?sort=last_bad">Last kick</a></th>
-          <th><a href="?sort=state">State</a></th>
+          <th><a href="{{ qs(params, sort='name') }}">Name</a></th>
+          <th><a href="{{ qs(params, sort='mac') }}">MAC</a></th>
+          <th><a href="{{ qs(params, sort='kicks') }}">Kicks</a></th>
+          <th><a href="{{ qs(params, sort='last_bad') }}">Last kick</a></th>
+          <th><a href="{{ qs(params, sort='state') }}">State</a></th>
           <th>Allowlist</th>
         </tr>
       </thead>
@@ -42,6 +81,9 @@
       </tbody>
     </table>
   </div>
+  {% else %}
+  <p class="empty">No devices match the current filters. <a href="{{ qs(params, state='', kicked_within='', allowlist='', q='') }}">Clear filters</a></p>
+  {% endif %}
 </div>
 {% else %}
 <div class="card">

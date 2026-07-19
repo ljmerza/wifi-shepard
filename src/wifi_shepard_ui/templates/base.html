@@ -128,6 +128,9 @@
     line-height: 1.2;
   }
   .tile.is-alert .value { color: var(--danger-fg); }
+  /* Tiles that deep-link to a pre-filtered /devices view. */
+  a.tile { display: block; text-decoration: none; color: var(--fg); }
+  a.tile:hover { border-color: var(--accent); }
 
   /* ---- cards ---- */
   .card {
@@ -220,6 +223,64 @@
   /* Narrow screens hide <thead>, which takes the sort links with it — this bar
      carries the same affordance as plain links (no JS, no write routes). */
   .sort-bar { display: none; }
+
+  /* ---- devices filter bar (always visible; chips echo the mobile sort bar) ---- */
+  .filter-bar {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    padding: 0.6rem 1rem;
+    background: var(--surface-alt);
+    border-bottom: 1px solid var(--border);
+  }
+  .filter-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.35rem;
+    margin: 0;
+  }
+  .filter-label {
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    font-weight: 600;
+    color: var(--fg-muted);
+    flex: 0 0 4.5rem;
+  }
+  .filter-row a {
+    text-decoration: none;
+    font-size: 0.78rem;
+    font-weight: 500;
+    padding: 0.2rem 0.6rem;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--fg-muted);
+  }
+  .filter-row a.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .filter-search input[type="search"] {
+    font: inherit;
+    font-size: 0.78rem;
+    padding: 0.2rem 0.6rem;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--fg);
+    width: 12rem;
+    max-width: 100%;
+  }
+  .filter-search button {
+    font: inherit;
+    font-size: 0.78rem;
+    font-weight: 500;
+    padding: 0.2rem 0.7rem;
+    border-radius: 999px;
+    border: 1px solid var(--accent);
+    background: var(--accent);
+    color: #fff;
+    cursor: pointer;
+  }
 
   /* ---- narrow screens: collapse each table row into a card ---- */
   @media (max-width: 40rem) {
