@@ -116,6 +116,11 @@ class Scanner:
         for ap in await self.controller.list_ap_stats():
             await self.db.insert_ap_stats(ap)
 
+        # Keep client_samples to a rolling 30-day window so it stays query-sized.
+        # Self-throttled to hourly inside prune_client_samples(); cheap to call
+        # every cycle.
+        await self.db.prune_client_samples()
+
     async def _run_dns_thrash(self, clients: list[Any]) -> None:
         detector = self._dns_detector
         pipeline = self._pipeline

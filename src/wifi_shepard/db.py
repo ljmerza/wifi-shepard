@@ -19,6 +19,8 @@ class Store(Protocol):
 
     async def insert_sample(self, client: Any) -> None: ...
 
+    async def prune_client_samples(self, *, now: float | None = None) -> int: ...
+
     async def insert_ap_stats(self, ap: Any) -> None: ...
 
     async def insert_kick(
@@ -182,12 +184,39 @@ _CLIENT_SAMPLES_MIGRATIONS = (
     ("rx_bytes", "ALTER TABLE client_samples ADD COLUMN rx_bytes INTEGER"),
 )
 
+# Indexes for the read-only UI's hot query paths. Created idempotently on every
+# connect(). ⚠️ The client_samples index MUST declare `mac COLLATE NOCASE`: the
+# UI filters with `WHERE mac = ? COLLATE NOCASE`, and SQLite silently ignores a
+# BINARY-collation index for a NOCASE predicate (falls back to a full scan). The
+# NOCASE index serves both the per-MAC history queries and the overview's
+# GROUP BY mac aggregates. The ap_radio_samples index serves the per-radio CU
+# sparklines (WHERE ap_id = ? AND radio = ? ORDER BY ts DESC).
+_INDEXES = (
+    "CREATE INDEX IF NOT EXISTS ix_client_samples_mac_ts "
+    "ON client_samples (mac COLLATE NOCASE, ts)",
+    "CREATE INDEX IF NOT EXISTS ix_ap_radio_samples_ap_radio_ts "
+    "ON ap_radio_samples (ap_id, radio, ts)",
+)
+
+# Rolling retention for client_samples, the unbounded per-cycle table (one row
+# per client per poll — millions of rows, hundreds of MB). Pruned to a 30-day
+# window so it stays query-sized rather than growing forever. Unlike the DNS
+# observability tables (pruned on every write), this is pruned opportunistically
+# from the scanner loop and throttled: the DELETE predicate is on ts, which the
+# (mac, ts) read index does not front, so each prune full-scans. Throttling to
+# once an hour keeps that cost negligible without a second ts-leading index.
+_CLIENT_SAMPLES_RETENTION_SECONDS = 30 * 86400
+_CLIENT_SAMPLES_PRUNE_INTERVAL_SECONDS = 3600
+
 
 class Database:
     def __init__(self, path: Path | str) -> None:
         self.path = Path(path)
         self._conn: aiosqlite.Connection | None = None
         self.closed = False
+        # Last time prune_client_samples() actually ran a DELETE (0.0 = never),
+        # used to throttle the prune to once per _CLIENT_SAMPLES_PRUNE_INTERVAL.
+        self._last_client_prune = 0.0
 
     async def connect(self) -> None:
         self._conn = await aiosqlite.connect(self.path)
@@ -201,6 +230,8 @@ class Database:
         await self._conn.execute(SCHEMA_DNS_THRASH_OBSERVATIONS)
         await self._migrate_kick_events()
         await self._migrate_client_samples()
+        for ddl in _INDEXES:
+            await self._conn.execute(ddl)
         await self._conn.commit()
 
     async def _migrate_kick_events(self) -> None:
@@ -245,6 +276,28 @@ class Database:
             ),
         )
         await self._conn.commit()
+
+    async def prune_client_samples(self, *, now: float | None = None) -> int:
+        """Delete client_samples older than the 30-day retention window.
+
+        Called once per poll cycle from the scanner, but throttled to at most
+        once per _CLIENT_SAMPLES_PRUNE_INTERVAL_SECONDS: the DELETE filters on
+        ts (which the (mac, ts) read index does not front), so it full-scans;
+        hourly is plenty to hold a rolling window without a second ts index.
+        Returns the number of rows deleted (0 when throttled or nothing expired).
+        """
+        if self._conn is None:
+            raise RuntimeError("Database.connect() must be called before prune_client_samples()")
+        now = time.time() if now is None else now
+        if now - self._last_client_prune < _CLIENT_SAMPLES_PRUNE_INTERVAL_SECONDS:
+            return 0
+        self._last_client_prune = now
+        cur = await self._conn.execute(
+            "DELETE FROM client_samples WHERE ts < ?",
+            (now - _CLIENT_SAMPLES_RETENTION_SECONDS,),
+        )
+        await self._conn.commit()
+        return cur.rowcount
 
     async def insert_ap_stats(self, ap: Any) -> None:
         """Persist one AP health snapshot: an ap_samples row + one ap_radio_samples
