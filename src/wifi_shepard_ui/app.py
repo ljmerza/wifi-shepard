@@ -14,9 +14,10 @@ import os
 import secrets
 import sqlite3
 import time
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
+from urllib.parse import urlencode
 
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
@@ -81,6 +82,18 @@ def _spark_area(values: Sequence[float] | None) -> str:
     if not points:
         return ""
     return f"0,{_SPARK_H:.0f} {points} {_SPARK_W:.0f},{_SPARK_H:.0f}"
+
+
+def _merge_query(params: Mapping[str, str], **overrides: str) -> str:
+    """Build a same-page href keeping the current /devices params, with overrides.
+
+    Empty values are dropped, so overriding a filter to "" clears it from the
+    URL. When nothing survives, a bare "?" still links back to the unfiltered
+    page. Exposed to templates as the `qs` global.
+    """
+    merged = {**params, **overrides}
+    encoded = urlencode([(k, v) for k, v in merged.items() if v])
+    return f"?{encoded}" if encoded else "?"
 
 
 def _refresh_seconds() -> int:
@@ -174,6 +187,7 @@ def create_app(*, db_path: Path, config_path: Path | None = None) -> FastAPI:
     templates.env.filters["radio_band"] = _radio_band
     templates.env.filters["spark_points"] = _spark_points
     templates.env.filters["spark_area"] = _spark_area
+    templates.env.globals["qs"] = _merge_query
 
     # Snapshot the auto-refresh interval at construction time (matches the env
     # snapshot pattern below; a container restart picks up changes).
@@ -264,12 +278,45 @@ def create_app(*, db_path: Path, config_path: Path | None = None) -> FastAPI:
         )
 
     @app.get("/devices", response_class=HTMLResponse)
-    def devices(request: Request, sort: str = "mac"):
-        allowlist = config_io.read_allowlist(config_path)
-        rows = _safe_read(lambda c: views.list_devices(c, allowlist=allowlist, now=time.time()), [])
+    def devices(
+        request: Request,
+        sort: str = "mac",
+        state: str = "",
+        kicked_within: str = "",
+        allowlist: str = "",
+        q: str = "",
+    ):
+        now = time.time()
+        allowed_macs = config_io.read_allowlist(config_path)
+        all_rows = _safe_read(lambda c: views.list_devices(c, allowlist=allowed_macs, now=now), [])
+        rows = views.filter_devices(
+            all_rows, now=now, state=state, kicked_within=kicked_within, allowlist=allowlist, q=q
+        )
         rows = views.sort_devices(rows, sort)
+        # Current params for chip/sort hrefs (the qs global drops empties; the
+        # default sort stays out of filter URLs so they read clean).
+        params = {
+            "sort": sort if sort != "mac" else "",
+            "state": state,
+            "kicked_within": kicked_within,
+            "allowlist": allowlist,
+            "q": q,
+        }
         return templates.TemplateResponse(
-            request, "devices.html", {"rows": rows, "sort": sort, "active_page": "devices"}
+            request,
+            "devices.html",
+            {
+                "rows": rows,
+                "total": len(all_rows),
+                "sort": sort,
+                "state": state,
+                "kicked_within": kicked_within,
+                "allowlist": allowlist,
+                "q": q,
+                "params": params,
+                "filtered": any((state, kicked_within, allowlist, q)),
+                "active_page": "devices",
+            },
         )
 
     @app.get("/devices/{mac}", response_class=HTMLResponse)

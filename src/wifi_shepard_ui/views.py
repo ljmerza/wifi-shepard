@@ -244,6 +244,61 @@ def sort_devices(rows: list[DeviceRow], key: str) -> list[DeviceRow]:
     return sorted(rows, key=keyfn, reverse=reverse)
 
 
+# /devices filter vocabularies. Unknown values are ignored (treated as "no
+# filter") rather than erroring: filters arrive as hand-editable URL params
+# and a typo should render the unfiltered list, not a 500.
+FILTER_STATES: frozenset[str] = frozenset({"NORMAL", "KICKED", "EVALUATING", "QUARANTINE"})
+KICKED_WITHIN_SECONDS: dict[str, int] = {
+    "24h": 86400,
+    "7d": 86400 * 7,
+    "30d": 86400 * 30,
+}
+
+
+def filter_devices(
+    rows: list[DeviceRow],
+    *,
+    now: float,
+    state: str = "",
+    kicked_within: str = "",
+    allowlist: str = "",
+    q: str = "",
+) -> list[DeviceRow]:
+    """Apply the /devices URL-param filters; multiple filters AND together.
+
+    - state: backoff-state label, case-insensitive ("kicked", "quarantine", …).
+    - kicked_within: "24h" / "7d" / "30d" keep MACs with a real kick inside the
+      window (matching the overview tiles' trailing windows); "never" keeps
+      MACs with zero real kicks.
+    - allowlist: "yes" / "no" on the allowlisted flag.
+    - q: case-insensitive substring match on MAC or controller-reported name.
+    """
+    out = rows
+
+    state_norm = state.strip().upper()
+    if state_norm in FILTER_STATES:
+        out = [r for r in out if r.state == state_norm]
+
+    kicked_norm = kicked_within.strip().lower()
+    if kicked_norm == "never":
+        out = [r for r in out if r.kick_count == 0]
+    elif kicked_norm in KICKED_WITHIN_SECONDS:
+        cutoff = now - KICKED_WITHIN_SECONDS[kicked_norm]
+        out = [r for r in out if r.last_kick_ts is not None and r.last_kick_ts > cutoff]
+
+    allow_norm = allowlist.strip().lower()
+    if allow_norm == "yes":
+        out = [r for r in out if r.allowlisted]
+    elif allow_norm == "no":
+        out = [r for r in out if not r.allowlisted]
+
+    q_norm = q.strip().lower()
+    if q_norm:
+        out = [r for r in out if q_norm in r.mac.lower() or q_norm in (r.name or "").lower()]
+
+    return out
+
+
 def device_history(
     conn: sqlite3.Connection,
     *,

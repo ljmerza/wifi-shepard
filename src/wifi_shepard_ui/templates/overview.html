@@ -7,22 +7,22 @@
 <h1>Overview</h1>
 
 <div class="tiles">
-  <div class="tile">
+  <a class="tile" href="/devices">
     <div class="label">Tracked clients</div>
     <div class="value">{{ stats.total_clients }}</div>
-  </div>
-  <div class="tile{% if stats.quarantined %} is-alert{% endif %}">
+  </a>
+  <a class="tile{% if stats.quarantined %} is-alert{% endif %}" href="/devices?state=quarantine">
     <div class="label">Quarantined</div>
     <div class="value">{{ stats.quarantined }}</div>
-  </div>
-  <div class="tile">
+  </a>
+  <a class="tile" href="/devices?kicked_within=24h">
     <div class="label">Kicks today</div>
     <div class="value">{{ stats.kicks_today }}</div>
-  </div>
-  <div class="tile">
+  </a>
+  <a class="tile" href="/devices?kicked_within=7d">
     <div class="label">Kicks this week</div>
     <div class="value">{{ stats.kicks_this_week }}</div>
-  </div>
+  </a>
 </div>
 
 <div class="card" style="margin-top:1.5rem">
