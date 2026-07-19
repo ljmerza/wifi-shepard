@@ -24,18 +24,30 @@ class SchemaMismatch(RuntimeError):
     """The daemon's kick_events table is missing one or more columns the UI reads."""
 
 
-def assert_kick_events_schema(conn: sqlite3.Connection) -> None:
+def assert_kick_events_schema(conn) -> None:
     """Raise SchemaMismatch if kick_events EXISTS but lacks any column views.py reads.
 
     If the table doesn't exist at all, this is the empty-state case (daemon
     mid-startup, schema not yet created) and the request-path's _safe_read
     will render the empty-state page — return silently here.
+
+    Introspection is the one place SQL can't stay engine-agnostic: the MySQL
+    adapter (WIFI_SHEPARD_DB_URL) exposes table_columns() instead of
+    sqlite_master/PRAGMA, checking the same contract.
     """
-    cur = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='kick_events'")
-    if cur.fetchone() is None:
-        return
-    cur = conn.execute("PRAGMA table_info(kick_events)")
-    present = {row[1] for row in cur.fetchall()}
+    table_columns = getattr(conn, "table_columns", None)
+    if table_columns is not None:
+        present = table_columns("kick_events")
+        if present is None:
+            return
+    else:
+        cur = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='kick_events'"
+        )
+        if cur.fetchone() is None:
+            return
+        cur = conn.execute("PRAGMA table_info(kick_events)")
+        present = {row[1] for row in cur.fetchall()}
     missing = _REQUIRED_KICK_EVENTS_COLUMNS - present
     if missing:
         raise SchemaMismatch(

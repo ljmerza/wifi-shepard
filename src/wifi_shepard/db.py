@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import time
 from pathlib import Path
-from typing import Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 import aiosqlite
+
+if TYPE_CHECKING:
+    from .db_mysql import MySQLDatabase
 
 
 @runtime_checkable
@@ -445,3 +448,19 @@ class Database:
             await self._conn.close()
             self._conn = None
         self.closed = True
+
+
+def create_database(*, db_path: Path | str, db_url: str | None = None) -> Database | MySQLDatabase:
+    """Pick the persistence backend from the WIFI_SHEPARD_DB_URL env override.
+
+    A set ``db_url`` (``mysql://user:password@host:3306/database``) selects the
+    MySQL/MariaDB backend; unset/empty keeps the default SQLite file at
+    ``db_path``. Imported lazily so the SQLite path never touches aiomysql, and
+    a malformed URL fails closed at construction time (clear ValueError) rather
+    than at first write.
+    """
+    if db_url:
+        from .db_mysql import MySQLDatabase
+
+        return MySQLDatabase(db_url)
+    return Database(db_path)

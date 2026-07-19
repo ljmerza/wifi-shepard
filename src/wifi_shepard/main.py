@@ -10,7 +10,7 @@ from pathlib import Path
 
 from .config import Config, load_config_from_path
 from .controllers import Controller, build_controller
-from .db import Database
+from .db import create_database
 from .dns_sources import DnsSource, build_dns_sources
 from .dns_thrash import DnsThrashDetector
 from .notify import HomeAssistantNotifier, Notifier
@@ -29,6 +29,7 @@ class Daemon:
         *,
         config_path: Path,
         db_path: Path,
+        db_url: str | None = None,
         controllers: list[Controller] | None = None,
         ha: Notifier | None = None,
         rebooter: Rebooter | None = None,
@@ -37,6 +38,7 @@ class Daemon:
     ) -> None:
         self.config_path = Path(config_path)
         self.db_path = Path(db_path)
+        self.db_url = db_url
         self.config: Config = load_config_from_path(self.config_path)
         if controllers is None:
             if not self.config.controllers:
@@ -54,7 +56,8 @@ class Daemon:
         self.ha = ha
         self.rebooter = rebooter
         self.registry = registry
-        self.db = Database(self.db_path)
+        # WIFI_SHEPARD_DB_URL set → MySQL/MariaDB backend; unset → SQLite file.
+        self.db = create_database(db_path=self.db_path, db_url=db_url)
         # ADR-0011: optional DNS data source, built once at startup from dns_sources:.
         # None when unconfigured; source URL/password changes require a restart (a
         # SIGHUP retunes only the dns_thrash thresholds, not the source wiring).
@@ -291,6 +294,7 @@ def build_daemon(
     *,
     config_path: Path,
     db_path: Path,
+    db_url: str | None = None,
     controllers: list[Controller] | None = None,
     ha: Notifier | None = None,
     rebooter: Rebooter | None = None,
@@ -300,6 +304,7 @@ def build_daemon(
     return Daemon(
         config_path=config_path,
         db_path=db_path,
+        db_url=db_url,
         controllers=controllers,
         ha=ha,
         rebooter=rebooter,

@@ -24,7 +24,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 from fastapi.templating import Jinja2Templates
 
 from wifi_shepard_ui import config_io, settings_schema, views
-from wifi_shepard_ui.db import open_readonly
+from wifi_shepard_ui.db import MySQLReadConnection, open_readonly_any
 
 logger = logging.getLogger(__name__)
 
@@ -145,22 +145,24 @@ def _assert_no_write_routes(app: FastAPI) -> None:
         )
 
 
-def _connect(db_path: Path) -> sqlite3.Connection:
-    """Open the daemon's SQLite file in strict read-only mode (AC-5)."""
-    return open_readonly(db_path)
+def _connect(db_path: Path, db_url: str | None = None) -> sqlite3.Connection | MySQLReadConnection:
+    """Open the daemon's DB in strict read-only mode (AC-5): SQLite file, or
+    the MySQL/MariaDB backend when WIFI_SHEPARD_DB_URL is set."""
+    return open_readonly_any(db_path, db_url)
 
 
-def _check_db_schema(db_path: Path) -> None:
-    """Startup smoke-test: if the DB file exists, fail fast on schema drift.
+def _check_db_schema(db_path: Path, db_url: str | None = None) -> None:
+    """Startup smoke-test: if the DB exists, fail fast on schema drift.
 
-    Empty-state (DB file absent) is fine — the routes' `_safe_read` path
-    handles that. The check exists to surface ADR-0003's coordinated-bump
-    risk loudly at container startup, not per-request.
+    Empty-state (DB file absent / DB server unreachable) is fine — the routes'
+    `_safe_read` path handles that. The check exists to surface ADR-0003's
+    coordinated-bump risk loudly at container startup, not per-request.
     """
     try:
-        conn = open_readonly(db_path)
+        conn = open_readonly_any(db_path, db_url)
     except sqlite3.OperationalError:
-        # File missing / dir not readable — empty-state path will handle it.
+        # File missing / dir not readable / DB server down — empty-state path
+        # will handle it.
         return
     try:
         try:
@@ -174,8 +176,10 @@ def _check_db_schema(db_path: Path) -> None:
         conn.close()
 
 
-def create_app(*, db_path: Path, config_path: Path | None = None) -> FastAPI:
-    _check_db_schema(db_path)
+def create_app(
+    *, db_path: Path, config_path: Path | None = None, db_url: str | None = None
+) -> FastAPI:
+    _check_db_schema(db_path, db_url)
     # ADR-0013: the settings UI reads/writes this file. Default matches the daemon's
     # WIFI_SHEPARD_CONFIG (/config/config.yaml); the containing dir is bind-mounted
     # :rw into the sidecar (Phase 5 compose) so writes reach the daemon's file.
@@ -215,10 +219,10 @@ def create_app(*, db_path: Path, config_path: Path | None = None) -> FastAPI:
         schema not yet created). Any other OperationalError (locked DB,
         disk I/O, corruption) is logged and re-raised so it surfaces as a
         500, not a silently empty page."""
-        conn: sqlite3.Connection | None = None
+        conn: sqlite3.Connection | MySQLReadConnection | None = None
         try:
             try:
-                conn = _connect(db_path)
+                conn = _connect(db_path, db_url)
             except sqlite3.OperationalError as e:
                 if any(marker in str(e).lower() for marker in _EMPTY_STATE_OPERATIONAL_ERRORS):
                     return default
@@ -429,4 +433,7 @@ def create_app(*, db_path: Path, config_path: Path | None = None) -> FastAPI:
 app = create_app(
     db_path=Path(os.environ.get("WIFI_SHEPARD_DB_PATH", "/data/state.db")),
     config_path=Path(os.environ.get("WIFI_SHEPARD_CONFIG_PATH", "/config/config.yaml")),
+    # Same env var the daemon reads: set → both sides talk to MySQL/MariaDB,
+    # unset → both sides use the SQLite file. One switch, no split-brain.
+    db_url=os.environ.get("WIFI_SHEPARD_DB_URL") or None,
 )
