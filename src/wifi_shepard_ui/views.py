@@ -79,6 +79,22 @@ class HistoryEvent:
 
 
 @dataclass(frozen=True)
+class DeviceSummary:
+    """Header stats for the /devices/{mac} page."""
+
+    mac: str
+    name: str | None
+    state: str
+    allowlisted: bool
+    kick_count: int  # real kicks only, matching list_devices / overview
+    dry_run_count: int  # would-kicks the daemon never sent
+    last_kick_ts: float | None  # newest real kick
+    last_seen_ts: float | None  # newest client sample
+    signal: int | None  # from the newest sample
+    radio: str | None  # from the newest sample
+
+
+@dataclass(frozen=True)
 class RadioUtil:
     radio: str  # backend radio id: "ng" (2.4), "na" (5), "6e"/"ax" (6)
     channel: int
@@ -359,6 +375,63 @@ def device_history(
 
     events.sort(key=lambda e: e.ts, reverse=True)
     return events
+
+
+def device_summary(
+    conn: sqlite3.Connection,
+    *,
+    mac: str,
+    allowlist: set[str],
+    now: float,
+) -> DeviceSummary:
+    """Stats for the tiles above one device's timeline.
+
+    Same conventions as list_devices: state and kick count come from REAL
+    kicks only (dry_run=0), so this header always agrees with the device's
+    row on /devices; dry-runs surface separately as a would-kick count.
+    MAC matching is case-insensitive to match device_history.
+    """
+    kick_count, last_kick_ts = conn.execute(
+        "SELECT COUNT(*), MAX(ts) FROM kick_events WHERE mac = ? COLLATE NOCASE AND dry_run = 0",
+        (mac,),
+    ).fetchone()
+    (dry_run_count,) = conn.execute(
+        "SELECT COUNT(*) FROM kick_events WHERE mac = ? COLLATE NOCASE AND dry_run = 1",
+        (mac,),
+    ).fetchone()
+
+    latest = conn.execute(
+        "SELECT ts, signal, radio FROM client_samples "
+        "WHERE mac = ? COLLATE NOCASE ORDER BY ts DESC LIMIT 1",
+        (mac,),
+    ).fetchone()
+    last_seen_ts, signal, radio = latest if latest else (None, None, None)
+
+    # Latest controller-reported name, queried separately so a pre-`name`-column
+    # DB (partial deploy) degrades to no name instead of losing the whole header.
+    name = None
+    try:
+        row = conn.execute(
+            "SELECT name FROM client_samples WHERE mac = ? COLLATE NOCASE ORDER BY ts DESC LIMIT 1",
+            (mac,),
+        ).fetchone()
+        if row:
+            name = row[0]
+    except sqlite3.OperationalError:
+        name = None
+
+    return DeviceSummary(
+        mac=mac,
+        name=name,
+        state=derive_state(kick_count=kick_count, last_kick_ts=last_kick_ts, now=now),
+        allowlisted=mac.lower() in {m.lower() for m in allowlist},
+        kick_count=kick_count,
+        dry_run_count=dry_run_count,
+        last_kick_ts=last_kick_ts,
+        last_seen_ts=last_seen_ts,
+        signal=signal,
+        radio=radio,
+    )
 
 
 def _cu_trend(conn: sqlite3.Connection, *, ap_id: str, radio: str) -> tuple[int, ...]:

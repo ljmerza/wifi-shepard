@@ -128,6 +128,10 @@
     line-height: 1.2;
   }
   .tile.is-alert .value { color: var(--danger-fg); }
+  /* Timestamp-valued tiles (device history header): full ts won't fit at 1.75rem. */
+  .tile .value.value-sm { font-size: 0.95rem; padding: 0.45rem 0 0.2rem; }
+  .tile .value .unit { font-size: 0.95rem; font-weight: 500; color: var(--fg-muted); }
+  .tile .tile-note { font-size: 0.72rem; color: var(--fg-muted); }
   /* Tiles that deep-link to a pre-filtered /devices view. */
   a.tile { display: block; text-decoration: none; color: var(--fg); }
   a.tile:hover { border-color: var(--accent); }

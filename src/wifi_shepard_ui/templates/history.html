@@ -1,8 +1,35 @@
 {% extends "base.html" %}
 {% block title %}{{ mac }} — wifi-shepard{% endblock %}
 {% block body %}
-<h1>History <span class="mac-title">{{ mac }}</span></h1>
+<h1>History <span class="mac-title">{{ mac }}</span>{% if summary and summary.name %} <span class="mac-title">· {{ summary.name }}</span>{% endif %}</h1>
 {% if events %}
+{% if summary %}
+<div class="tiles" style="margin-bottom:1rem">
+  <div class="tile">
+    <div class="label">State</div>
+    <div class="value"><span class="badge badge-{{ summary.state | lower }}">{{ summary.state }}</span></div>
+    {% if summary.allowlisted %}<div class="tile-note">allowlisted — never kicked</div>{% endif %}
+  </div>
+  <div class="tile{% if summary.state == 'QUARANTINE' %} is-alert{% endif %}">
+    <div class="label">Kicks</div>
+    <div class="value">{{ summary.kick_count }}</div>
+    {% if summary.dry_run_count %}<div class="tile-note">+{{ summary.dry_run_count }} dry-run</div>{% endif %}
+  </div>
+  <div class="tile">
+    <div class="label">Last kick</div>
+    <div class="value value-sm" title="{{ summary.last_kick_ts | int if summary.last_kick_ts else '' }}">{{ summary.last_kick_ts | fmt_ts }}</div>
+  </div>
+  <div class="tile">
+    <div class="label">Last seen</div>
+    <div class="value value-sm" title="{{ summary.last_seen_ts | int if summary.last_seen_ts else '' }}">{{ summary.last_seen_ts | fmt_ts }}</div>
+  </div>
+  <div class="tile">
+    <div class="label">Signal</div>
+    <div class="value">{% if summary.signal is not none %}{{ summary.signal }} <span class="unit">dBm</span>{% else %}—{% endif %}</div>
+    {% if summary.radio %}<div class="tile-note">{{ summary.radio | radio_band }} GHz · latest sample</div>{% endif %}
+  </div>
+</div>
+{% endif %}
 <div class="card">
   <div class="card-head">
     <h2>{{ events | length }} event{{ "" if events | length == 1 else "s" }}</h2>

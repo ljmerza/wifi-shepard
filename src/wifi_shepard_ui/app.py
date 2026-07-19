@@ -321,9 +321,19 @@ def create_app(*, db_path: Path, config_path: Path | None = None) -> FastAPI:
 
     @app.get("/devices/{mac}", response_class=HTMLResponse)
     def device_history(request: Request, mac: str):
-        events = _safe_read(lambda c: views.device_history(c, mac=mac), [])
+        now = time.time()
+        allowed_macs = config_io.read_allowlist(config_path)
+        events, summary = _safe_read(
+            lambda c: (
+                views.device_history(c, mac=mac),
+                views.device_summary(c, mac=mac, allowlist=allowed_macs, now=now),
+            ),
+            ([], None),
+        )
         return templates.TemplateResponse(
-            request, "history.html", {"mac": mac, "events": events, "active_page": "devices"}
+            request,
+            "history.html",
+            {"mac": mac, "events": events, "summary": summary, "active_page": "devices"},
         )
 
     @app.get("/dns", response_class=HTMLResponse)
