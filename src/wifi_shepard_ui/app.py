@@ -1,10 +1,15 @@
 """FastAPI app factory for the wifi-shepard sidecar.
 
-Read-only GET routes (`/`, `/devices`, `/devices/{mac}`, `/dns`, `/healthz`) plus the
-ADR-0013 settings editor: `GET /settings` (form pre-filled from config.yaml) and the
-one write path `POST /settings` (validate + round-trip write). Every other route stays
-GET-only, enforced by `_assert_no_write_routes` (ADR-0002's blanket no-write rule,
-amended by ADR-0013 to a single-path allowlist).
+Read-only GET routes (`/`, `/devices`, `/devices/{mac}`, `/dns`, `/healthz`) plus two
+write paths:
+
+- `POST /settings` (ADR-0013) — the whole config, rebuilt from the form model.
+- `POST /devices/{mac}/settings` (ADR-0014) — one device's per-MAC settings, applied
+  surgically so the rest of the file is untouched.
+
+Every other route stays GET-only, enforced by `_assert_no_write_routes` (ADR-0002's
+blanket no-write rule, amended by ADR-0013 and again by ADR-0014 to a two-path
+allowlist).
 """
 
 from __future__ import annotations
@@ -121,10 +126,11 @@ _EMPTY_STATE_OPERATIONAL_ERRORS = (
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
 
-# The sidecar is read-only EXCEPT for the ADR-0013 settings save route. This runtime
-# fence (checked in create_app after every route is registered) keeps every OTHER
-# route GET-only, so a stray write endpoint still fails loudly. ADR-0002's original
-# blanket no-write rule is amended by ADR-0013 to this single-path allowlist.
+# The sidecar is read-only EXCEPT for the ADR-0013 settings save and the ADR-0014
+# per-device save. This runtime fence (checked in create_app after every route is
+# registered) keeps every OTHER route GET-only, so a stray write endpoint still fails
+# loudly. ADR-0002's original blanket no-write rule is amended by those two ADRs to
+# this explicit two-path allowlist — each addition needs an ADR, not a wildcard.
 _FORBIDDEN_HTTP_METHODS = frozenset({"POST", "PUT", "DELETE", "PATCH"})
 _ALLOWED_WRITE_PATHS = frozenset({"/settings", "/devices/{mac}/settings"})
 
@@ -141,8 +147,8 @@ def _assert_no_write_routes(app: FastAPI) -> None:
             offenders.append(f"{path!r} -> {sorted(bad)}")
     if offenders:
         raise RuntimeError(
-            "wifi-shepard-ui must be read-only outside the settings save route — found "
-            "unexpected write routes: " + "; ".join(offenders)
+            "wifi-shepard-ui must be read-only outside the settings and per-device save "
+            "routes — found unexpected write routes: " + "; ".join(offenders)
         )
 
 
