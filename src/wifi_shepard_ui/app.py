@@ -1,10 +1,15 @@
 """FastAPI app factory for the wifi-shepard sidecar.
 
-Read-only GET routes (`/`, `/devices`, `/devices/{mac}`, `/dns`, `/healthz`) plus the
-ADR-0013 settings editor: `GET /settings` (form pre-filled from config.yaml) and the
-one write path `POST /settings` (validate + round-trip write). Every other route stays
-GET-only, enforced by `_assert_no_write_routes` (ADR-0002's blanket no-write rule,
-amended by ADR-0013 to a single-path allowlist).
+Read-only GET routes (`/`, `/devices`, `/devices/{mac}`, `/dns`, `/healthz`) plus two
+write paths:
+
+- `POST /settings` (ADR-0013) — the whole config, rebuilt from the form model.
+- `POST /devices/{mac}/settings` (ADR-0014) — one device's per-MAC settings, applied
+  surgically so the rest of the file is untouched.
+
+Every other route stays GET-only, enforced by `_assert_no_write_routes` (ADR-0002's
+blanket no-write rule, amended by ADR-0013 and again by ADR-0014 to a two-path
+allowlist).
 """
 
 from __future__ import annotations
@@ -17,13 +22,16 @@ import time
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 from urllib.parse import urlencode
 
+import ruamel.yaml as ruamel_yaml
+import yaml
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 from fastapi.templating import Jinja2Templates
 
-from wifi_shepard_ui import config_io, settings_schema, views
+from wifi_shepard_ui import config_io, device_config, settings_schema, views
 from wifi_shepard_ui.db import MySQLReadConnection, open_readonly_any
 
 logger = logging.getLogger(__name__)
@@ -120,12 +128,13 @@ _EMPTY_STATE_OPERATIONAL_ERRORS = (
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
 
-# The sidecar is read-only EXCEPT for the ADR-0013 settings save route. This runtime
-# fence (checked in create_app after every route is registered) keeps every OTHER
-# route GET-only, so a stray write endpoint still fails loudly. ADR-0002's original
-# blanket no-write rule is amended by ADR-0013 to this single-path allowlist.
+# The sidecar is read-only EXCEPT for the ADR-0013 settings save and the ADR-0014
+# per-device save. This runtime fence (checked in create_app after every route is
+# registered) keeps every OTHER route GET-only, so a stray write endpoint still fails
+# loudly. ADR-0002's original blanket no-write rule is amended by those two ADRs to
+# this explicit two-path allowlist — each addition needs an ADR, not a wildcard.
 _FORBIDDEN_HTTP_METHODS = frozenset({"POST", "PUT", "DELETE", "PATCH"})
-_ALLOWED_WRITE_PATHS = frozenset({"/settings"})
+_ALLOWED_WRITE_PATHS = frozenset({"/settings", "/devices/{mac}/settings"})
 
 
 def _assert_no_write_routes(app: FastAPI) -> None:
@@ -140,9 +149,90 @@ def _assert_no_write_routes(app: FastAPI) -> None:
             offenders.append(f"{path!r} -> {sorted(bad)}")
     if offenders:
         raise RuntimeError(
-            "wifi-shepard-ui must be read-only outside the settings save route — found "
-            "unexpected write routes: " + "; ".join(offenders)
+            "wifi-shepard-ui must be read-only outside the settings and per-device save "
+            "routes — found unexpected write routes: " + "; ".join(offenders)
         )
+
+
+# ADR-0014 device card: a heading per per-MAC object list. Only layout copy lives
+# here — every field's label, unit, and description comes from the schema.
+_DEVICE_GROUP_HEADINGS = {
+    "overrides": "Tuning for this device",
+    "reboot_override": "How to power-cycle this device",
+}
+
+
+# Both YAML parsers are in play: the daemon's pyyaml reader and ruamel's round-trip
+# loader. Their exception hierarchies are unrelated, so a malformed config raises one
+# or the other depending on which path reached it first.
+_CONFIG_READ_ERRORS = (OSError, ValueError, yaml.YAMLError, ruamel_yaml.YAMLError)
+
+
+def _safe_config(fn, default):
+    """Run a config-file read, degrading to `default` if config.yaml is missing or
+    malformed — a broken config must never 500 a read-only page."""
+    try:
+        return fn()
+    except _CONFIG_READ_ERRORS:
+        logger.exception("failed to read the config file")
+        return default
+
+
+def _reject_non_json(request: Request) -> JSONResponse | None:
+    """415 unless the body is declared `application/json`.
+
+    This is what makes the CSRF story true rather than aspirational. `request.json()`
+    happily parses a body sent as text/plain — exactly what a cross-site
+    `<form enctype="text/plain">` emits, which is a CORS *simple* request and triggers
+    no preflight. Demanding application/json forces a preflight this app never answers,
+    so a cross-origin page cannot reach either write route.
+    """
+    media_type = request.headers.get("content-type", "").split(";")[0].strip().lower()
+    if media_type != "application/json":
+        return JSONResponse(
+            {"ok": False, "error": "expected Content-Type: application/json"}, status_code=415
+        )
+    return None
+
+
+def _device_memberships() -> list[tuple[settings_schema.MembershipSpec, settings_schema.FieldSpec]]:
+    """(membership, its FieldSpec) pairs — the card reads the description off the spec.
+
+    A membership with no FieldSpec is schema drift, not a runtime condition: fail loudly
+    at import/render rather than quietly dropping a control from the card.
+    """
+    pairs = []
+    for membership in settings_schema.PER_DEVICE_MEMBERSHIPS:
+        field = settings_schema.field_by_path(membership.path)
+        if field is None:
+            raise RuntimeError(
+                f"per-device membership '{membership.key}' points at {membership.path!r}, "
+                "which has no FieldSpec"
+            )
+        pairs.append((membership, field))
+    return pairs
+
+
+def _device_groups(device_settings: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """The per-MAC object-list groups, each with its editable leaves and current values.
+    `mac` is skipped — the device's identity is the URL, not an input."""
+    groups: list[dict[str, Any]] = []
+    for key, prefix in settings_schema.PER_DEVICE_OBJECT_LISTS:
+        fields = [
+            (f, f.path[len(prefix) :])
+            for f in settings_schema.item_fields(prefix)
+            if f.path != f"{prefix}mac"
+        ]
+        groups.append(
+            {
+                "key": key,
+                "heading": _DEVICE_GROUP_HEADINGS.get(key, key),
+                "fields": fields,
+                # NOT "values" — Jinja would resolve `group.values` to dict.values().
+                "current": device_settings.get(key) or {},
+            }
+        )
+    return groups
 
 
 def _connect(db_path: Path, db_url: str | None = None) -> sqlite3.Connection | MySQLReadConnection:
@@ -320,13 +410,24 @@ def create_app(
                 "params": params,
                 "filtered": any((state, kicked_within, allowlist, q)),
                 "active_page": "devices",
+                "auth_required": bool(expected_token),
             },
         )
 
     @app.get("/devices/{mac}", response_class=HTMLResponse)
     def device_history(request: Request, mac: str):
         now = time.time()
-        allowed_macs = config_io.read_allowlist(config_path)
+        # ADR-0014: the per-device card is built from the schema, so a future per-MAC
+        # field renders here without a template edit. Both config reads are guarded
+        # together — a malformed config.yaml degrades to an all-off card rather than
+        # 500-ing a read-only page.
+        allowed_macs, device_settings = _safe_config(
+            lambda: (
+                config_io.read_allowlist(config_path),
+                device_config.read_device_settings(config_path, mac),
+            ),
+            (set(), {}),
+        )
         events, summary = _safe_read(
             lambda c: (
                 views.device_history(c, mac=mac),
@@ -337,8 +438,51 @@ def create_app(
         return templates.TemplateResponse(
             request,
             "history.html",
-            {"mac": mac, "events": events, "summary": summary, "active_page": "devices"},
+            {
+                "mac": mac,
+                "events": events,
+                "summary": summary,
+                "active_page": "devices",
+                "device_settings": device_settings,
+                "memberships": _device_memberships(),
+                "device_groups": _device_groups(device_settings),
+                "auth_required": bool(expected_token),
+            },
         )
+
+    @app.post("/devices/{mac}/settings")
+    async def device_settings_save(request: Request, mac: str):
+        # JSON-only + header-carried bearer token, the same CSRF-safe posture as the
+        # settings save route (ADR-0013 AC-9, ADR-0014 AC-6).
+        #
+        # The MAC is checked FIRST, before the body is read or the config is touched,
+        # so a malformed path can never reach the filesystem (AC-7).
+        if not device_config.is_valid_mac(mac):
+            return JSONResponse(
+                {"ok": False, "error": f"'{mac}' is not a valid MAC address"}, status_code=400
+            )
+        wrong_type = _reject_non_json(request)
+        if wrong_type is not None:
+            return wrong_type
+        try:
+            payload = await request.json()
+        except Exception:
+            return JSONResponse({"ok": False, "error": "expected a JSON body"}, status_code=400)
+        if not isinstance(payload, dict):
+            return JSONResponse({"ok": False, "error": "expected a JSON object"}, status_code=400)
+        try:
+            device_config.apply_device_settings(config_path, mac, payload)
+        except (ValueError, ruamel_yaml.YAMLError) as exc:
+            # ValueError covers both a bad payload and the daemon's own validation
+            # failure; a YAMLError means the file on disk is already broken. Both are
+            # the caller's problem to see, not a 500.
+            return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+        except OSError as exc:
+            logger.exception("device settings: failed to write %s", config_path)
+            return JSONResponse(
+                {"ok": False, "error": f"could not write config: {exc}"}, status_code=500
+            )
+        return JSONResponse({"ok": True, "message": "Saved. Applies on the daemon's next scan."})
 
     @app.get("/dns", response_class=HTMLResponse)
     def dns(request: Request):
@@ -396,6 +540,9 @@ def create_app(
         # JSON-only. A cross-site POST of application/json triggers a CORS preflight
         # this app never answers, so it can't be forged; with the header-carried bearer
         # token (auth middleware above) this write path is CSRF-safe (ADR-0013 AC-9).
+        wrong_type = _reject_non_json(request)
+        if wrong_type is not None:
+            return wrong_type
         try:
             payload = await request.json()
         except Exception:

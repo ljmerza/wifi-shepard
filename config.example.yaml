@@ -183,6 +183,8 @@ allowlist:
   - aa:bb:cc:dd:ee:ff
   - 11:22:33:44:55:66
 
+# Per-device tuning. Edit here, on the Settings page, or from the device's own page
+# at /devices/<mac> (ADR-0014). `name:` is a label for you — the daemon ignores it.
 overrides:
   - mac: dc:cc:e6:66:86:2b
     name: "leonardo s22"

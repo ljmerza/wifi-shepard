@@ -194,6 +194,13 @@ SECTIONS: tuple[SectionSpec, ...] = (
 # internal-only field can be excluded explicitly rather than silently missed (AC-1).
 EXCLUDED_PATHS: frozenset[str] = frozenset()
 
+# The converse of EXCLUDED_PATHS (ADR-0014): fields that live in config.yaml and are
+# editable here, but have NO counterpart in the daemon's `Config` dataclasses because
+# the loader ignores them (`config.py` filters unknown override keys). They are labels
+# for humans. Listing them explicitly is what stops them being silently dropped on a
+# save — the bug that deleted `overrides[].name` from every entry before ADR-0014.
+COSMETIC_PATHS: frozenset[str] = frozenset({"overrides[].name"})
+
 
 @dataclass(frozen=True)
 class OptionalSectionSpec:
@@ -219,6 +226,57 @@ OPTIONAL_SECTIONS: tuple[OptionalSectionSpec, ...] = (
 
 def optional_sections_for(ui_section: str) -> tuple[OptionalSectionSpec, ...]:
     return tuple(o for o in OPTIONAL_SECTIONS if o.ui_section == ui_section)
+
+
+@dataclass(frozen=True)
+class MembershipSpec:
+    """A MAC-list field that the *device* pages render as a single on/off toggle
+    (ADR-0014). On the Settings page the same field is a list of MACs; on a device
+    page the only question is whether this one MAC is in it.
+    """
+
+    key: str  # per-device payload key, e.g. "allowlisted"
+    path: str  # the MAC_LIST FieldSpec path, e.g. "allowlist"
+    label: str  # toggle text, phrased for one device rather than a list
+    # The global on/off switch this membership feeds, when there is one. Listing a MAC
+    # under a feature whose `enabled` is false does nothing, so the device card says so
+    # instead of offering a toggle that silently no-ops. None = always in effect.
+    gated_by: str | None = None
+    gate_hint: str = ""
+
+
+# The three per-MAC memberships, in the order the device card renders them.
+PER_DEVICE_MEMBERSHIPS: tuple[MembershipSpec, ...] = (
+    MembershipSpec("allowlisted", "allowlist", "Never nudge this device"),
+    MembershipSpec(
+        "inactivity_watched",
+        "detection.inactivity.macs",
+        "Watch this device for a wedged session",
+        gated_by="detection.inactivity.enabled",
+        gate_hint=(
+            "The silent-device detector is switched off globally, so this device won't be "
+            "watched until you turn it on under Detection in Settings."
+        ),
+    ),
+    MembershipSpec(
+        "reboot_eligible",
+        "reboot.eligible",
+        "Allow power-cycling this device",
+        gated_by="reboot.enabled",
+        gate_hint=(
+            "Rebooting is switched off globally, so nothing will be power-cycled until you "
+            "turn it on under Reboot in Settings."
+        ),
+    ),
+)
+
+# The per-MAC object lists, as (per-device payload key, item_prefix) pairs. The
+# matching ObjectListSpec supplies where each lands in the config mapping, so the
+# location is never written down twice.
+PER_DEVICE_OBJECT_LISTS: tuple[tuple[str, str], ...] = (
+    ("overrides", "overrides[]."),
+    ("reboot_override", "reboot.overrides[]."),
+)
 
 
 _KICK_MECHANISMS = ("deauth", "btm", "auto")
@@ -824,6 +882,17 @@ FIELDS: tuple[FieldSpec, ...] = (
         description="The device these per-device settings apply to, by MAC address.",
     ),
     FieldSpec(
+        path="overrides[].name",
+        label="Label",
+        kind=Kind.STRING,
+        section="overrides",
+        description=(
+            "A name for your own benefit, so you can tell which device this row is — "
+            "'kitchen wled', 'back bedroom camera'. The daemon ignores it entirely; it only "
+            "exists to keep the config readable."
+        ),
+    ),
+    FieldSpec(
         path="overrides[].tx_rate_kbps_max",
         label="This device's data-rate threshold",
         kind=Kind.INT_OR_NULL,
@@ -1147,6 +1216,15 @@ def item_fields(prefix: str) -> tuple[FieldSpec, ...]:
 
 def object_lists_for_section(section: str) -> tuple[ObjectListSpec, ...]:
     return tuple(o for o in OBJECT_LISTS if o.section == section)
+
+
+def object_list_by_prefix(prefix: str) -> ObjectListSpec | None:
+    """The ObjectListSpec whose items carry ``prefix`` — the bridge from a per-device
+    payload key to where that list lives in the config mapping."""
+    for o in OBJECT_LISTS:
+        if o.item_prefix == prefix:
+            return o
+    return None
 
 
 def scalar_fields_for_section(section: str) -> tuple[FieldSpec, ...]:

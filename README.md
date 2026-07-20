@@ -76,8 +76,11 @@ Standalone (outside the monorepo) — copy the service blocks out of
 
 The daemon writes its SQLite state to `/data/state.db` (mount as a volume) and
 reads `/config/config.yaml`. The UI sidecar mounts the state volume read-only and
-the config directory read-write (so the Settings page can save), and serves on
-port 8080. The config is mounted as a **directory** (not a single file) so the
+the config directory read-write (so the Settings page and the per-device cards can
+save), and serves on port 8080. Two routes write `config.yaml`: `POST /settings`
+(the whole config) and `POST /devices/{mac}/settings` (just that device's
+allowlist / override / inactivity / reboot settings). Every other route is GET-only,
+enforced at startup. The config is mounted as a **directory** (not a single file) so the
 daemon's file-watch reload sees edits — a single-file bind mount pins the inode and
 misses atomic rewrites.
 
