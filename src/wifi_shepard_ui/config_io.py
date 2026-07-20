@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import os
 import re
+from io import StringIO
 from pathlib import Path
 from typing import Any
 
@@ -410,14 +411,36 @@ def validate_mapping(mapping: dict[str, Any]) -> None:
 # --------------------------------------------------------------------------- writing
 
 
+def round_trip_yaml() -> YAML:
+    """The shared ruamel configuration — preserves comments, key order, and quoting.
+    Used by both writers (whole-file settings save and per-device edits, ADR-0014)."""
+    yaml_rt = YAML()
+    yaml_rt.preserve_quotes = True
+    yaml_rt.width = 4096  # don't line-wrap long scalars (URLs, descriptions)
+    return yaml_rt
+
+
+def dump_to_string(doc: Any, yaml_rt: YAML | None = None) -> str:
+    """Serialize a (possibly comment-carrying) document to YAML text."""
+    buf = StringIO()
+    (yaml_rt or round_trip_yaml()).dump(doc, buf)
+    return buf.getvalue()
+
+
+def write_text_atomic(path: Path, text: str) -> None:
+    """Temp file + rename, so a crashed write never leaves a truncated config the
+    daemon might reload."""
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(text)
+    os.replace(tmp, path)
+
+
 def write_config(path: Path, mapping: dict[str, Any]) -> None:
     """Atomically write the mapping to config.yaml, preserving comments / key order /
     ``${VAR}`` placeholders of an existing file (AC-5). A managed section absent from
     the mapping is removed; unmanaged operator keys are left untouched.
     """
-    yaml_rt = YAML()
-    yaml_rt.preserve_quotes = True
-    yaml_rt.width = 4096  # don't line-wrap long scalars (URLs, descriptions)
+    yaml_rt = round_trip_yaml()
 
     if path.exists():
         with path.open("r") as fh:
@@ -431,10 +454,7 @@ def write_config(path: Path, mapping: dict[str, Any]) -> None:
     else:
         doc = mapping
 
-    tmp = path.with_name(path.name + ".tmp")
-    with tmp.open("w") as fh:
-        yaml_rt.dump(doc, fh)
-    os.replace(tmp, path)
+    write_text_atomic(path, dump_to_string(doc, yaml_rt))
 
 
 def _overlay(dst: Any, src: dict[str, Any]) -> None:

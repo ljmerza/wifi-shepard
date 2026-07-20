@@ -23,7 +23,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 from fastapi.templating import Jinja2Templates
 
-from wifi_shepard_ui import config_io, settings_schema, views
+from wifi_shepard_ui import config_io, device_config, settings_schema, views
 from wifi_shepard_ui.db import MySQLReadConnection, open_readonly_any
 
 logger = logging.getLogger(__name__)
@@ -125,7 +125,7 @@ TEMPLATES_DIR = Path(__file__).parent / "templates"
 # route GET-only, so a stray write endpoint still fails loudly. ADR-0002's original
 # blanket no-write rule is amended by ADR-0013 to this single-path allowlist.
 _FORBIDDEN_HTTP_METHODS = frozenset({"POST", "PUT", "DELETE", "PATCH"})
-_ALLOWED_WRITE_PATHS = frozenset({"/settings"})
+_ALLOWED_WRITE_PATHS = frozenset({"/settings", "/devices/{mac}/settings"})
 
 
 def _assert_no_write_routes(app: FastAPI) -> None:
@@ -339,6 +339,34 @@ def create_app(
             "history.html",
             {"mac": mac, "events": events, "summary": summary, "active_page": "devices"},
         )
+
+    @app.post("/devices/{mac}/settings")
+    async def device_settings_save(request: Request, mac: str):
+        # JSON-only + header-carried bearer token, the same CSRF-safe posture as the
+        # settings save route (ADR-0013 AC-9, ADR-0014 AC-6).
+        #
+        # The MAC is checked FIRST, before the body is read or the config is touched,
+        # so a malformed path can never reach the filesystem (AC-7).
+        if not device_config.is_valid_mac(mac):
+            return JSONResponse(
+                {"ok": False, "error": f"'{mac}' is not a valid MAC address"}, status_code=400
+            )
+        try:
+            payload = await request.json()
+        except Exception:
+            return JSONResponse({"ok": False, "error": "expected a JSON body"}, status_code=400)
+        if not isinstance(payload, dict):
+            return JSONResponse({"ok": False, "error": "expected a JSON object"}, status_code=400)
+        try:
+            device_config.apply_device_settings(config_path, mac, payload)
+        except ValueError as exc:
+            return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+        except OSError as exc:
+            logger.exception("device settings: failed to write %s", config_path)
+            return JSONResponse(
+                {"ok": False, "error": f"could not write config: {exc}"}, status_code=500
+            )
+        return JSONResponse({"ok": True, "message": "Saved. Applies on the daemon's next scan."})
 
     @app.get("/dns", response_class=HTMLResponse)
     def dns(request: Request):

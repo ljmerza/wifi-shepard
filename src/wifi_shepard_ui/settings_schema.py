@@ -221,6 +221,38 @@ def optional_sections_for(ui_section: str) -> tuple[OptionalSectionSpec, ...]:
     return tuple(o for o in OPTIONAL_SECTIONS if o.ui_section == ui_section)
 
 
+@dataclass(frozen=True)
+class MembershipSpec:
+    """A MAC-list field that the *device* pages render as a single on/off toggle
+    (ADR-0014). On the Settings page the same field is a list of MACs; on a device
+    page the only question is whether this one MAC is in it.
+    """
+
+    key: str  # per-device payload key, e.g. "allowlisted"
+    path: str  # the MAC_LIST FieldSpec path, e.g. "allowlist"
+    label: str  # toggle text, phrased for one device rather than a list
+
+
+# The three per-MAC memberships, in the order the device card renders them.
+PER_DEVICE_MEMBERSHIPS: tuple[MembershipSpec, ...] = (
+    MembershipSpec("allowlisted", "allowlist", "Never nudge this device"),
+    MembershipSpec(
+        "inactivity_watched",
+        "detection.inactivity.macs",
+        "Watch this device for a wedged session",
+    ),
+    MembershipSpec("reboot_eligible", "reboot.eligible", "Allow power-cycling this device"),
+)
+
+# The per-MAC object lists, as (per-device payload key, item_prefix) pairs. The
+# matching ObjectListSpec supplies where each lands in the config mapping, so the
+# location is never written down twice.
+PER_DEVICE_OBJECT_LISTS: tuple[tuple[str, str], ...] = (
+    ("overrides", "overrides[]."),
+    ("reboot_override", "reboot.overrides[]."),
+)
+
+
 _KICK_MECHANISMS = ("deauth", "btm", "auto")
 
 FIELDS: tuple[FieldSpec, ...] = (
@@ -1147,6 +1179,15 @@ def item_fields(prefix: str) -> tuple[FieldSpec, ...]:
 
 def object_lists_for_section(section: str) -> tuple[ObjectListSpec, ...]:
     return tuple(o for o in OBJECT_LISTS if o.section == section)
+
+
+def object_list_by_prefix(prefix: str) -> ObjectListSpec | None:
+    """The ObjectListSpec whose items carry ``prefix`` — the bridge from a per-device
+    payload key to where that list lives in the config mapping."""
+    for o in OBJECT_LISTS:
+        if o.item_prefix == prefix:
+            return o
+    return None
 
 
 def scalar_fields_for_section(section: str) -> tuple[FieldSpec, ...]:
