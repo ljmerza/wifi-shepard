@@ -282,3 +282,34 @@ def test_ac_8_override_name_survives_both_write_paths(tmp_path: Path) -> None:
     assert "garage wled" in cfg.read_text()
     # Still parses — the daemon ignores the label (config.py:900 filters it out).
     assert load_config_from_path(cfg).overrides[0].mac == OVERRIDE_MAC
+
+
+def test_ac_9_devices_row_toggle_posts_to_the_route_and_reflects_state(
+    tmp_path: Path, seeded_db: Path
+) -> None:
+    from fastapi.testclient import TestClient
+
+    from tests.ui.conftest import MAC_A, MAC_B
+    from wifi_shepard_ui.app import create_app
+
+    cfg = write_device_sample(tmp_path)
+    client = TestClient(create_app(db_path=seeded_db, config_path=cfg))
+
+    # Read views still work with no token configured.
+    r = client.get("/devices")
+    assert r.status_code == 200
+    page = r.text
+
+    # Every row carries a toggle aimed at the per-device route.
+    for mac in (MAC_A, MAC_B):
+        assert f'data-allowlist-toggle="{mac.lower()}"' in page.lower()
+
+    # MAC_A is allowlisted in the sample config; MAC_B is not.
+    assert MAC_B.lower() not in client.get("/devices?allowlist=yes").text.lower()
+
+    r = client.post(f"/devices/{MAC_B}/settings", json={"allowlisted": True})
+    assert r.status_code == 200, r.text
+
+    # Reflected on reload, from config.yaml — no separate UI state.
+    assert MAC_B.lower() in client.get("/devices?allowlist=yes").text.lower()
+    assert MAC_B.lower() in load_config_from_path(cfg).allowlist
