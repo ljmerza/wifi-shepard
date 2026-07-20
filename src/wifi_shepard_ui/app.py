@@ -371,6 +371,7 @@ def create_app(
                 "params": params,
                 "filtered": any((state, kicked_within, allowlist, q)),
                 "active_page": "devices",
+                "auth_required": bool(expected_token),
             },
         )
 

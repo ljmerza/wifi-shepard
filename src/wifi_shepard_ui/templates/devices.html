@@ -1,5 +1,20 @@
 {% extends "base.html" %}
 {% block title %}Devices — wifi-shepard{% endblock %}
+
+{% block head_extra %}
+<style>
+  .allow-toggle { display: inline-flex; align-items: center; gap: 0.4rem; cursor: pointer; }
+  .allow-toggle .allow-state { font-size: 0.85rem; color: var(--fg-muted); }
+  .allow-toggle input:checked ~ .allow-state { color: var(--fg); font-weight: 550; }
+  .allow-toggle.saving { opacity: 0.55; }
+  .allow-toggle.failed .allow-state { color: var(--danger-fg); }
+  .allow-tokenbar { display: flex; align-items: center; gap: 0.4rem; margin: 0.6rem 0 0;
+    font-size: 0.82rem; color: var(--fg-muted); }
+  .allow-tokenbar input { font: inherit; padding: 0.35rem 0.5rem; border: 1px solid var(--border);
+    border-radius: 8px; background: var(--surface-alt); color: var(--fg); }
+</style>
+{% endblock %}
+
 {% block body %}
 <h1>Devices</h1>
 {% if total %}
@@ -75,7 +90,13 @@
           <td data-label="Kicks" class="num">{{ row.kick_count }}</td>
           <td data-label="Last kick" class="muted nowrap" title="{{ row.last_kick_ts | int if row.last_kick_ts else '' }}">{{ row.last_kick_ts | fmt_ts }}</td>
           <td data-label="State"><span class="badge badge-{{ row.state | lower }}">{{ row.state }}</span></td>
-          <td data-label="Allowlist">{% if row.allowlisted %}<span class="badge badge-neutral">yes</span>{% else %}<span class="muted">no</span>{% endif %}</td>
+          <td data-label="Allowlist">
+            {# ADR-0014: allowlist the device from the row you're reading, no MAC retyping. #}
+            <label class="allow-toggle" title="Allowlisted devices are never nudged or rebooted">
+              <input type="checkbox" data-allowlist-toggle="{{ row.mac | lower }}"{% if row.allowlisted %} checked{% endif %}>
+              <span class="allow-state">{% if row.allowlisted %}yes{% else %}no{% endif %}</span>
+            </label>
+          </td>
         </tr>
         {% endfor %}
       </tbody>
@@ -84,7 +105,51 @@
   {% else %}
   <p class="empty">No devices match the current filters. <a href="{{ qs(params, state='', kicked_within='', allowlist='', q='') }}">Clear filters</a></p>
   {% endif %}
+  {% if rows and auth_required %}
+  <label class="allow-tokenbar">admin token
+    <input type="password" id="allow-admin-token" autocomplete="off" placeholder="required to change the allowlist">
+  </label>
+  {% endif %}
 </div>
+
+<script>
+(function () {
+  // ADR-0014: each row's allowlist checkbox writes straight to config.yaml through the
+  // same per-device route the device page uses. Reverts on failure so the checkbox
+  // never claims a change the file didn't take.
+  document.querySelectorAll("[data-allowlist-toggle]").forEach(function (box) {
+    box.addEventListener("change", function () {
+      var wrap = box.closest(".allow-toggle");
+      var state = wrap.querySelector(".allow-state");
+      var wanted = box.checked;
+      var headers = { "Content-Type": "application/json" };
+      var tok = document.getElementById("allow-admin-token");
+      if (tok && tok.value) headers["Authorization"] = "Bearer " + tok.value;
+      wrap.classList.remove("failed");
+      wrap.classList.add("saving");
+      fetch("/devices/" + encodeURIComponent(box.dataset.allowlistToggle) + "/settings",
+            { method: "POST", headers: headers, body: JSON.stringify({ allowlisted: wanted }) })
+        .then(function (res) { return res.ok ? res.json() : { ok: false }; })
+        .then(function (data) {
+          wrap.classList.remove("saving");
+          if (data && data.ok) {
+            state.textContent = wanted ? "yes" : "no";
+          } else {
+            box.checked = !wanted;
+            wrap.classList.add("failed");
+            state.textContent = "failed";
+          }
+        })
+        .catch(function () {
+          wrap.classList.remove("saving");
+          box.checked = !wanted;
+          wrap.classList.add("failed");
+          state.textContent = "failed";
+        });
+    });
+  });
+})();
+</script>
 {% else %}
 <div class="card">
   <p class="empty">No clients tracked yet. The daemon must run for at least one poll cycle for data to appear here.</p>
