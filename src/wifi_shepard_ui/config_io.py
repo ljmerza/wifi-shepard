@@ -411,21 +411,38 @@ def validate_mapping(mapping: dict[str, Any]) -> None:
 # --------------------------------------------------------------------------- writing
 
 
-# A block-sequence item, used to detect how the operator indents lists. ruamel has no
-# per-file style memory: whatever indent we set is applied to EVERY sequence it emits,
-# so guessing wrong reindents lists the edit never touched.
-_SEQ_ITEM_RE = re.compile(r"^( *)- ", re.MULTILINE)
+# Detecting how the operator indents block sequences. ruamel has no per-file style
+# memory: whatever indent we set is applied to EVERY sequence it emits, so guessing
+# wrong reindents lists the edit never touched.
+#
+# Only TOP-LEVEL sequences are measured. A nested one (`detection.inactivity.macs`)
+# carries its parents' indentation in its column, so reading that as the offset would
+# over-indent every list in the file.
+_TOP_LEVEL_KEY_RE = re.compile(r"^[A-Za-z_][\w.-]*:[ \t]*(#.*)?$")
+_SEQ_ITEM_RE = re.compile(r"^( *)- ")
+_SKIPPABLE_RE = re.compile(r"^[ \t]*(#.*)?$")  # blank line or whole-line comment
 
-# Fallback for a file with no block sequence yet (or a brand-new one): the style
-# config.example.yaml is written in.
+# Fallback for a file with no top-level block sequence yet (or a brand-new one): the
+# style config.example.yaml is written in.
 _DEFAULT_SEQ_OFFSET = 2
 
 
 def _detect_sequence_offset(source: str) -> int:
-    """How far the file indents block-sequence items under their key. Both common
-    styles round-trip unchanged: 0 (`- item` at the parent's column) and 2 (`  - item`)."""
-    match = _SEQ_ITEM_RE.search(source)
-    return len(match.group(1)) if match else _DEFAULT_SEQ_OFFSET
+    """How far the file indents block-sequence items under a top-level key.
+
+    Both common styles then round-trip unchanged: 0 (`- item` at the parent's column)
+    and 2 (`  - item`). A file with no top-level sequence gets the repo's own style.
+    """
+    after_top_level_key = False
+    for line in source.splitlines():
+        if _SKIPPABLE_RE.match(line):
+            continue
+        if after_top_level_key:
+            item = _SEQ_ITEM_RE.match(line)
+            if item:
+                return len(item.group(1))
+        after_top_level_key = bool(_TOP_LEVEL_KEY_RE.match(line))
+    return _DEFAULT_SEQ_OFFSET
 
 
 def round_trip_yaml(source: str = "") -> YAML:
@@ -443,10 +460,15 @@ def round_trip_yaml(source: str = "") -> YAML:
     return yaml_rt
 
 
-def dump_to_string(doc: Any, yaml_rt: YAML | None = None) -> str:
-    """Serialize a (possibly comment-carrying) document to YAML text."""
+def dump_to_string(doc: Any, yaml_rt: YAML) -> str:
+    """Serialize a (possibly comment-carrying) document to YAML text.
+
+    The emitter is required, not defaulted: it carries the sequence indentation read
+    off the file being rewritten, and silently falling back to the repo's default style
+    is exactly how an edit reindents lists it never touched.
+    """
     buf = StringIO()
-    (yaml_rt or round_trip_yaml()).dump(doc, buf)
+    yaml_rt.dump(doc, buf)
     return buf.getvalue()
 
 

@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode
 
+import ruamel.yaml as ruamel_yaml
 import yaml
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
@@ -159,6 +160,22 @@ _DEVICE_GROUP_HEADINGS = {
     "overrides": "Tuning for this device",
     "reboot_override": "How to power-cycle this device",
 }
+
+
+# Both YAML parsers are in play: the daemon's pyyaml reader and ruamel's round-trip
+# loader. Their exception hierarchies are unrelated, so a malformed config raises one
+# or the other depending on which path reached it first.
+_CONFIG_READ_ERRORS = (OSError, ValueError, yaml.YAMLError, ruamel_yaml.YAMLError)
+
+
+def _safe_config(fn, default):
+    """Run a config-file read, degrading to `default` if config.yaml is missing or
+    malformed — a broken config must never 500 a read-only page."""
+    try:
+        return fn()
+    except _CONFIG_READ_ERRORS:
+        logger.exception("failed to read the config file")
+        return default
 
 
 def _reject_non_json(request: Request) -> JSONResponse | None:
@@ -400,7 +417,17 @@ def create_app(
     @app.get("/devices/{mac}", response_class=HTMLResponse)
     def device_history(request: Request, mac: str):
         now = time.time()
-        allowed_macs = config_io.read_allowlist(config_path)
+        # ADR-0014: the per-device card is built from the schema, so a future per-MAC
+        # field renders here without a template edit. Both config reads are guarded
+        # together — a malformed config.yaml degrades to an all-off card rather than
+        # 500-ing a read-only page.
+        allowed_macs, device_settings = _safe_config(
+            lambda: (
+                config_io.read_allowlist(config_path),
+                device_config.read_device_settings(config_path, mac),
+            ),
+            (set(), {}),
+        )
         events, summary = _safe_read(
             lambda c: (
                 views.device_history(c, mac=mac),
@@ -408,14 +435,6 @@ def create_app(
             ),
             ([], None),
         )
-        # ADR-0014: the per-device card. Built from the schema so a future per-MAC
-        # field renders here without a template edit. A missing/unreadable config
-        # degrades to an all-off card rather than 500-ing the history page.
-        try:
-            device_settings = device_config.read_device_settings(config_path, mac)
-        except (OSError, ValueError, yaml.YAMLError):
-            logger.exception("device card: failed to read %s", config_path)
-            device_settings = {}
         return templates.TemplateResponse(
             request,
             "history.html",
@@ -453,7 +472,10 @@ def create_app(
             return JSONResponse({"ok": False, "error": "expected a JSON object"}, status_code=400)
         try:
             device_config.apply_device_settings(config_path, mac, payload)
-        except ValueError as exc:
+        except (ValueError, ruamel_yaml.YAMLError) as exc:
+            # ValueError covers both a bad payload and the daemon's own validation
+            # failure; a YAMLError means the file on disk is already broken. Both are
+            # the caller's problem to see, not a 500.
             return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
         except OSError as exc:
             logger.exception("device settings: failed to write %s", config_path)

@@ -40,6 +40,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+import yaml
 from ruamel.yaml.comments import CommentedMap, CommentedSeq
 from ruamel.yaml.scalarstring import DoubleQuotedScalarString
 
@@ -90,6 +91,21 @@ def _mac_matches(value: Any, mac: str) -> bool:
     return isinstance(value, str) and normalize_mac(value) == mac
 
 
+def _append_keeping_trailing_comment(seq: CommentedSeq, value: Any) -> None:
+    """Append to a block sequence without swallowing the comment that follows it.
+
+    ruamel attaches a comment block sitting *after* the last item to that item, so a
+    plain ``append`` lands the new entry below it — pushing the next section's header
+    comment into the middle of this list. Move the trailing comment onto the new last
+    item so it stays at the bottom where the operator wrote it.
+    """
+    previous_last = len(seq) - 1
+    seq.append(value)
+    comments = getattr(seq, "ca", None)
+    if comments is not None and previous_last in comments.items:
+        comments.items[len(seq) - 1] = comments.items.pop(previous_last)
+
+
 def _apply_membership(doc: CommentedMap, spec: ss.MembershipSpec, mac: str, on: bool) -> bool:
     """Add/remove ``mac`` from the MAC list at ``spec.path``. Returns True if changed."""
     parts = tuple(spec.path.split("."))
@@ -107,7 +123,7 @@ def _apply_membership(doc: CommentedMap, spec: ss.MembershipSpec, mac: str, on: 
             parent[parts[-1]] = CommentedSeq()
             existing = parent[parts[-1]]
         # Quoted so pyyaml (YAML 1.1) can't read an all-numeric MAC as a base-60 int.
-        existing.append(DoubleQuotedScalarString(mac))
+        _append_keeping_trailing_comment(existing, DoubleQuotedScalarString(mac))
         return True
 
     if not isinstance(existing, list):
@@ -148,6 +164,10 @@ def _apply_object_row(doc: CommentedMap, key: str, prefix: str, mac: str, values
 
     location = tuple(spec.location)
     seq = _node(doc, location)
+    # Same rule as _apply_membership: a present-but-wrong-shaped node is the operator's
+    # data, not ours to replace.
+    if seq is not None and not isinstance(seq, list):
+        raise ValueError(f"'{'.'.join(location)}' in config.yaml is not a list — fix it by hand")
     row = None
     if isinstance(seq, list):
         row = next(
@@ -165,7 +185,7 @@ def _apply_object_row(doc: CommentedMap, key: str, prefix: str, mac: str, values
             parent = _ensure_parent(doc, location)
             parent[location[-1]] = CommentedSeq()
             seq = parent[location[-1]]
-        seq.append(row)
+        _append_keeping_trailing_comment(seq, row)
         changed = True
 
     cleared_any = False
@@ -253,9 +273,17 @@ def apply_device_settings(path: Path, mac: str, payload: dict[str, Any]) -> bool
         return False
 
     # Validate the WHOLE config, not just the edited fragment, so cross-field rules
-    # still fire. CommentedMap/CommentedSeq are dict/list subclasses, so the daemon's
-    # parser reads them unchanged.
-    config_io.validate_mapping(doc)
+    # still fire.
+    #
+    # Validate the *text about to be written*, re-read with pyyaml — the daemon's own
+    # reader. Handing the ruamel document straight to the validator would check a
+    # YAML 1.2 parse of a file the daemon loads as YAML 1.1, and the two disagree in
+    # both directions: `dry_run: yes` is True to the daemon but the string "yes" to
+    # ruamel (a valid config wrongly rejected), and an unquoted all-numeric MAC is a
+    # string to ruamel but a base-60 int to the daemon (an invalid config wrongly
+    # accepted, breaking the fail-closed guarantee).
+    text = config_io.dump_to_string(doc, yaml_rt)
+    config_io.validate_mapping(yaml.safe_load(text) or {})
 
-    config_io.write_text_atomic(path, config_io.dump_to_string(doc, yaml_rt))
+    config_io.write_text_atomic(path, text)
     return True

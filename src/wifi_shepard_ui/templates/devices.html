@@ -129,16 +129,23 @@
       wrap.classList.add("saving");
       fetch("/devices/" + encodeURIComponent(box.dataset.allowlistToggle) + "/settings",
             { method: "POST", headers: headers, body: JSON.stringify({ allowlisted: wanted }) })
-        .then(function (res) { return res.ok ? res.json() : { ok: false }; })
-        .then(function (data) {
+        .then(function (res) {
+          return res.json().catch(function () { return {}; }).then(function (data) {
+            return { status: res.status, ok: res.ok, data: data };
+          });
+        })
+        .then(function (r) {
           wrap.classList.remove("saving");
-          if (data && data.ok) {
+          if (r.ok && r.data.ok) {
             state.textContent = wanted ? "yes" : "no";
-          } else {
-            box.checked = !wanted;
-            wrap.classList.add("failed");
-            state.textContent = "failed";
+            return;
           }
+          box.checked = !wanted;
+          wrap.classList.add("failed");
+          // Distinguish "you need a token" from a real failure, the way the device
+          // card does — otherwise the toggle just silently springs back.
+          state.textContent = r.status === 401 ? "need token" : "failed";
+          if (r.status !== 401 && r.data.error) wrap.title = r.data.error;
         })
         .catch(function () {
           wrap.classList.remove("saving");
