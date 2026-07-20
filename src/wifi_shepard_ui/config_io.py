@@ -417,6 +417,10 @@ def round_trip_yaml() -> YAML:
     yaml_rt = YAML()
     yaml_rt.preserve_quotes = True
     yaml_rt.width = 4096  # don't line-wrap long scalars (URLs, descriptions)
+    # ruamel's default (sequence=2, offset=0) dedents every list against the style
+    # config.example.yaml is written in, so an untouched `controllers:` block would
+    # be reindented on save. Match the repo's style instead: `  - item`.
+    yaml_rt.indent(mapping=2, sequence=4, offset=2)
     return yaml_rt
 
 
