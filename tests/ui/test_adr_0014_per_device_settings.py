@@ -9,9 +9,12 @@ that setting unchanged).
 from __future__ import annotations
 
 import difflib
+import html as htmllib
 from pathlib import Path
 
 import pytest
+
+from wifi_shepard_ui import settings_schema as ss
 
 from tests.ui._device_data import (
     ABSENT_SECTIONS,
@@ -127,3 +130,38 @@ def test_ac_3_absent_key_unchanged_null_clears_empty_row_removed(tmp_path: Path)
     assert r.status_code == 200, r.text
     assert _override_for(cfg, OVERRIDE_MAC) is None
     assert OVERRIDE_MAC not in cfg.read_text()
+
+
+def test_ac_4_device_card_renders_every_per_mac_field_from_the_schema(tmp_path: Path) -> None:
+    cfg = write_device_sample(tmp_path)
+    # No DB: a device with zero recorded history must still be configurable.
+    r = device_client(tmp_path, cfg).get(f"/devices/{OVERRIDE_MAC}")
+    assert r.status_code == 200
+    page = htmllib.unescape(r.text)
+
+    # The three MAC-list memberships render as per-device toggles, with the label and
+    # description taken from the schema (no metadata duplicated in the template).
+    assert ss.PER_DEVICE_MEMBERSHIPS, "schema must declare the per-device memberships"
+    for membership in ss.PER_DEVICE_MEMBERSHIPS:
+        field = ss.field_by_path(membership.path)
+        assert field is not None, f"{membership.path} must be a FieldSpec"
+        assert membership.label in page
+        assert field.description in page
+        assert f'data-device-key="{membership.key}"' in r.text
+
+    # Every per-MAC object-list knob renders too — minus `mac`, which is the URL.
+    assert ss.PER_DEVICE_OBJECT_LISTS, "schema must declare the per-device object lists"
+    for key, prefix in ss.PER_DEVICE_OBJECT_LISTS:
+        leaves = [f for f in ss.item_fields(prefix) if f.path != f"{prefix}mac"]
+        assert leaves, f"{prefix} must contribute editable leaves"
+        for field in leaves:
+            leaf = field.path[len(prefix) :]
+            assert f'data-device-leaf="{key}:{leaf}"' in r.text, f"{key}:{leaf} not rendered"
+            assert field.label in page
+
+    # Identity comes from the URL, never an editable input.
+    assert 'data-device-leaf="overrides:mac"' not in r.text
+
+    # Pre-filled from the live config.yaml.
+    assert 'value="6000"' in r.text  # overrides[].tx_rate_kbps_max
+    assert 'value="-65"' in r.text  # overrides[].signal_dbm_max
