@@ -8,11 +8,13 @@ that setting unchanged).
 
 from __future__ import annotations
 
+import difflib
 from pathlib import Path
 
 import pytest
 
 from tests.ui._device_data import (
+    ABSENT_SECTIONS,
     ALLOWLISTED_MAC,
     NEW_MAC,
     device_client,
@@ -50,3 +52,45 @@ def test_ac_1_allowlist_toggle_adds_removes_and_is_idempotent(tmp_path: Path) ->
     allowlist = load_config_from_path(cfg).allowlist
     assert NEW_MAC not in allowlist
     assert ALLOWLISTED_MAC in allowlist
+
+
+def _line_diff(before: str, after: str) -> tuple[list[str], list[str]]:
+    """(removed, added) lines between two revisions of the file."""
+    before_lines, after_lines = before.splitlines(), after.splitlines()
+    removed: list[str] = []
+    added: list[str] = []
+    for tag, i1, i2, j1, j2 in difflib.SequenceMatcher(
+        None, before_lines, after_lines
+    ).get_opcodes():
+        if tag == "equal":
+            continue
+        removed += before_lines[i1:i2]
+        added += after_lines[j1:j2]
+    return removed, added
+
+
+def test_ac_2_save_touches_only_the_edited_key(tmp_path: Path) -> None:
+    cfg = write_device_sample(tmp_path)
+    before = cfg.read_text()
+
+    r = device_client(tmp_path, cfg).post(
+        f"/devices/{NEW_MAC}/settings", json={"allowlisted": True}
+    )
+    assert r.status_code == 200, r.text
+    after = cfg.read_text()
+
+    # A surgical write never conjures a section the operator left out.
+    for section in ABSENT_SECTIONS:
+        assert section not in after, f"{section} was materialized by a per-device save"
+
+    assert "# operator hand comment" in after  # comments preserved
+    assert "${UNIFI_PASSWORD}" in after  # secret placeholder never resolved
+
+    removed, added = _line_diff(before, after)
+    assert removed == [], f"a surgical save removed lines: {removed}"
+    assert len(added) == 1 and NEW_MAC in added[0], f"expected one added line, got: {added}"
+
+    # Unrelated settings still parse to their original values.
+    cfg_obj = load_config_from_path(cfg)
+    assert cfg_obj.detection.signal_dbm_max == -70
+    assert cfg_obj.scanner.poll_interval_seconds == 60
