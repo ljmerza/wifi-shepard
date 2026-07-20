@@ -165,3 +165,19 @@ def test_ac_4_device_card_renders_every_per_mac_field_from_the_schema(tmp_path: 
     # Pre-filled from the live config.yaml.
     assert 'value="6000"' in r.text  # overrides[].tx_rate_kbps_max
     assert 'value="-65"' in r.text  # overrides[].signal_dbm_max
+
+
+def test_ac_5_invalid_save_rejected_with_daemon_message_file_unchanged(tmp_path: Path) -> None:
+    cfg = write_device_sample(tmp_path)
+    before = cfg.read_bytes()
+
+    r = device_client(tmp_path, cfg).post(
+        f"/devices/{OVERRIDE_MAC}/settings", json={"overrides": {"kick_mechanism": "bogus"}}
+    )
+    assert r.status_code == 400
+    body = r.json()
+    assert body["ok"] is False
+    # The daemon's own message, produced by validating the WHOLE mutated config.
+    assert "kick_mechanism" in body["error"]
+    assert "bogus" in body["error"]
+    assert cfg.read_bytes() == before
