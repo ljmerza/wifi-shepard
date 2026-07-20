@@ -14,8 +14,6 @@ from pathlib import Path
 
 import pytest
 
-from wifi_shepard_ui import settings_schema as ss
-
 from tests.ui._device_data import (
     ABSENT_SECTIONS,
     ALLOWLISTED_MAC,
@@ -26,6 +24,7 @@ from tests.ui._device_data import (
 )
 from tests.ui._settings_data import payload_from
 from wifi_shepard.config import load_config_from_path
+from wifi_shepard_ui import settings_schema as ss
 
 
 @pytest.fixture(autouse=True)

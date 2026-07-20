@@ -194,6 +194,13 @@ SECTIONS: tuple[SectionSpec, ...] = (
 # internal-only field can be excluded explicitly rather than silently missed (AC-1).
 EXCLUDED_PATHS: frozenset[str] = frozenset()
 
+# The converse of EXCLUDED_PATHS (ADR-0014): fields that live in config.yaml and are
+# editable here, but have NO counterpart in the daemon's `Config` dataclasses because
+# the loader ignores them (`config.py` filters unknown override keys). They are labels
+# for humans. Listing them explicitly is what stops them being silently dropped on a
+# save — the bug that deleted `overrides[].name` from every entry before ADR-0014.
+COSMETIC_PATHS: frozenset[str] = frozenset({"overrides[].name"})
+
 
 @dataclass(frozen=True)
 class OptionalSectionSpec:
@@ -854,6 +861,17 @@ FIELDS: tuple[FieldSpec, ...] = (
         kind=Kind.MAC,
         section="overrides",
         description="The device these per-device settings apply to, by MAC address.",
+    ),
+    FieldSpec(
+        path="overrides[].name",
+        label="Label",
+        kind=Kind.STRING,
+        section="overrides",
+        description=(
+            "A name for your own benefit, so you can tell which device this row is — "
+            "'kitchen wled', 'back bedroom camera'. The daemon ignores it entirely; it only "
+            "exists to keep the config readable."
+        ),
     ),
     FieldSpec(
         path="overrides[].tx_rate_kbps_max",
