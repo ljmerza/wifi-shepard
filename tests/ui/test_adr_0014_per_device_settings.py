@@ -181,3 +181,55 @@ def test_ac_5_invalid_save_rejected_with_daemon_message_file_unchanged(tmp_path:
     assert "kick_mechanism" in body["error"]
     assert "bogus" in body["error"]
     assert cfg.read_bytes() == before
+
+
+DEVICE_SETTINGS_ROUTE = "/devices/{mac}/settings"
+
+
+def test_ac_6_write_fence_allows_exactly_two_paths_and_gates_on_token(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from fastapi.testclient import TestClient
+
+    from wifi_shepard_ui.app import (
+        _ALLOWED_WRITE_PATHS,
+        _assert_no_write_routes,
+        create_app,
+    )
+
+    assert set(_ALLOWED_WRITE_PATHS) == {"/settings", DEVICE_SETTINGS_ROUTE}
+
+    cfg = write_device_sample(tmp_path)
+    app = create_app(db_path=tmp_path / "absent.db", config_path=cfg)
+    write_methods = {"POST", "PUT", "DELETE", "PATCH"}
+    actual_write_paths = {
+        route.path
+        for route in app.routes
+        if write_methods & {m.upper() for m in (getattr(route, "methods", None) or set())}
+    }
+    assert actual_write_paths == {"/settings", DEVICE_SETTINGS_ROUTE}
+
+    # The fence is still a fence: an unlisted write route raises at startup.
+    @app.post("/rogue")
+    def _rogue() -> dict[str, bool]:  # pragma: no cover - never called
+        return {"ok": True}
+
+    with pytest.raises(RuntimeError, match="rogue"):
+        _assert_no_write_routes(app)
+
+    # With a token configured, an unauthenticated per-device save is refused and the
+    # file is untouched (same posture as the settings route).
+    monkeypatch.setenv("WIFI_SHEPARD_UI_TOKEN", "s3cret")
+    before = cfg.read_bytes()
+    client = TestClient(create_app(db_path=tmp_path / "absent.db", config_path=cfg))
+    r = client.post(f"/devices/{NEW_MAC}/settings", json={"allowlisted": True})
+    assert r.status_code == 401
+    assert cfg.read_bytes() == before
+
+    r = client.post(
+        f"/devices/{NEW_MAC}/settings",
+        json={"allowlisted": True},
+        headers={"Authorization": "Bearer s3cret"},
+    )
+    assert r.status_code == 200, r.text
+    assert NEW_MAC in load_config_from_path(cfg).allowlist
