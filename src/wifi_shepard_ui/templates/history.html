@@ -1,5 +1,39 @@
 {% extends "base.html" %}
+{% from "_fields.html" import control %}
 {% block title %}{{ mac }} — wifi-shepard{% endblock %}
+
+{% block head_extra %}
+<style>
+  .dev-settings .field { padding: 0.6rem 0; border-top: 1px solid var(--border); }
+  .dev-settings .field:first-child { border-top: 0; }
+  .dev-settings .field-label { font-weight: 550; font-size: 0.9rem; display: block; margin-bottom: 0.3rem; }
+  .dev-settings .field-label .unit { color: var(--fg-muted); font-weight: 400; }
+  .dev-settings .field-desc { color: var(--fg-muted); font-size: 0.82rem; margin: 0.35rem 0 0; max-width: 74ch; }
+  .dev-settings input[type=text], .dev-settings input[type=number], .dev-settings select {
+    font: inherit; padding: 0.4rem 0.55rem; border: 1px solid var(--border);
+    border-radius: 8px; background: var(--surface-alt); color: var(--fg); width: 100%; max-width: 22rem;
+  }
+  .dev-settings .field-bool label { display: flex; align-items: center; gap: 0.5rem; font-weight: 550; font-size: 0.9rem; }
+  .dev-settings .field-bool input { width: auto; }
+  .dev-group { border-top: 1px solid var(--border); margin-top: 0.9rem; padding-top: 0.8rem; }
+  .dev-group h3 { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.05em;
+    color: var(--fg-muted); margin: 0 0 0.5rem; }
+  .dev-fields { display: grid; grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr)); gap: 0.6rem; }
+  .dev-fields .field { border-top: 0; padding: 0.15rem 0; }
+  .dev-fields input, .dev-fields select { max-width: none; }
+  .dev-savebar { display: flex; flex-wrap: wrap; align-items: center; gap: 0.75rem; margin-top: 1rem; }
+  .dev-savebar .btn-save { background: var(--accent); color: #fff; border: 0; border-radius: 8px;
+    padding: 0.5rem 1.2rem; font-weight: 600; font: inherit; cursor: pointer; font-weight: 600; }
+  .dev-savebar .result { font-size: 0.88rem; }
+  .dev-savebar .result.ok { color: var(--ok-fg); }
+  .dev-savebar .result.err { color: var(--danger-fg); }
+  .dev-savebar .token-field { margin-left: auto; display: flex; align-items: center; gap: 0.4rem;
+    font-size: 0.82rem; color: var(--fg-muted); }
+  .dev-savebar .token-field input { font: inherit; padding: 0.35rem 0.5rem; border: 1px solid var(--border);
+    border-radius: 8px; background: var(--surface-alt); color: var(--fg); }
+</style>
+{% endblock %}
+
 {% block body %}
 <h1>History <span class="mac-title">{{ mac }}</span>{% if summary and summary.name %} <span class="mac-title">· {{ summary.name }}</span>{% endif %}</h1>
 {% if events %}
@@ -65,5 +99,107 @@
   <p class="empty">No events recorded for {{ mac }}.</p>
 </div>
 {% endif %}
+{# ADR-0014: every per-MAC setting, for the device you are already looking at. Rendered
+   from settings_schema, so a new per-device field appears here with no template edit. #}
+<div class="card dev-settings" id="device-settings">
+  <div class="card-head">
+    <h2>Device settings</h2>
+    <span class="card-note">Written to config.yaml · applies on the daemon's next scan</span>
+  </div>
+
+  {% for membership, field in memberships %}
+  <div class="field field-bool">
+    <label>
+      <input type="checkbox" data-device-key="{{ membership.key }}"{% if device_settings[membership.key] %} checked{% endif %}>
+      {{ membership.label }}
+    </label>
+    <p class="field-desc">{{ field.description }}</p>
+  </div>
+  {% endfor %}
+
+  {% for group in device_groups %}
+  <div class="dev-group">
+    <h3>{{ group.heading }}</h3>
+    <div class="dev-fields">
+      {% for field, leaf in group.fields %}
+      <div class="field">
+        <label class="field-label">{{ field.label }}{% if field.unit %} <span class="unit">({{ field.unit }})</span>{% endif %}</label>
+        {{ control(field, group.current.get(leaf), "data-device-leaf", group.key ~ ":" ~ leaf) }}
+        <p class="field-desc">{{ field.description }}</p>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+  {% endfor %}
+
+  <div class="dev-savebar">
+    <button type="button" class="btn-save" id="dev-save-btn">Save device settings</button>
+    <span class="result" id="dev-save-result"></span>
+    {% if auth_required %}
+    <label class="token-field">admin token
+      <input type="password" id="dev-admin-token" autocomplete="off" placeholder="required to save">
+    </label>
+    {% endif %}
+  </div>
+</div>
+
 <p style="margin-top:1rem"><a href="/devices">← All devices</a></p>
+
+<script>
+(function () {
+  var root = document.getElementById("device-settings");
+  if (!root) return;
+  var MAC = {{ mac | tojson }};
+
+  function collect() {
+    // Partial payload: only what this card owns. A blank knob is sent as null,
+    // which clears it so the device inherits the global (ADR-0014 AC-3).
+    var payload = {};
+    root.querySelectorAll("[data-device-key]").forEach(function (el) {
+      payload[el.dataset.deviceKey] = el.checked;
+    });
+    root.querySelectorAll("[data-device-leaf]").forEach(function (el) {
+      var parts = el.dataset.deviceLeaf.split(":");
+      var group = parts[0], leaf = parts[1];
+      payload[group] = payload[group] || {};
+      var value = el.type === "checkbox" ? el.checked : el.value;
+      payload[group][leaf] = (value === "" ? null : value);
+    });
+    return payload;
+  }
+
+  var btn = document.getElementById("dev-save-btn");
+  var out = document.getElementById("dev-save-result");
+  btn.addEventListener("click", function () {
+    var headers = { "Content-Type": "application/json" };
+    var tok = document.getElementById("dev-admin-token");
+    if (tok && tok.value) headers["Authorization"] = "Bearer " + tok.value;
+    out.className = "result";
+    out.textContent = "Saving…";
+    fetch("/devices/" + encodeURIComponent(MAC) + "/settings",
+          { method: "POST", headers: headers, body: JSON.stringify(collect()) })
+      .then(function (res) {
+        return res.json().catch(function () { return {}; }).then(function (data) {
+          return { status: res.status, ok: res.ok, data: data };
+        });
+      })
+      .then(function (r) {
+        if (r.ok && r.data.ok) {
+          out.className = "result ok";
+          out.textContent = "✓ " + (r.data.message || "Saved.");
+        } else if (r.status === 401) {
+          out.className = "result err";
+          out.textContent = "Unauthorized — enter your admin token to save.";
+        } else {
+          out.className = "result err";
+          out.textContent = "✕ " + (r.data.error || ("Save failed (HTTP " + r.status + ")"));
+        }
+      })
+      .catch(function (err) {
+        out.className = "result err";
+        out.textContent = "✕ " + err;
+      });
+  });
+})();
+</script>
 {% endblock %}

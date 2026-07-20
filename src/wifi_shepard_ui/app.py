@@ -17,6 +17,7 @@ import time
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 from urllib.parse import urlencode
 
 from fastapi import FastAPI, Request
@@ -143,6 +144,56 @@ def _assert_no_write_routes(app: FastAPI) -> None:
             "wifi-shepard-ui must be read-only outside the settings save route — found "
             "unexpected write routes: " + "; ".join(offenders)
         )
+
+
+# ADR-0014 device card: a heading per per-MAC object list. Only layout copy lives
+# here — every field's label, unit, and description comes from the schema.
+_DEVICE_GROUP_HEADINGS = {
+    "overrides": "Tuning for this device",
+    "reboot_override": "How to power-cycle this device",
+}
+
+
+def _safe_config(fn, default):
+    """Run a config-file read, degrading to `default` if config.yaml is missing or
+    malformed — a broken config must never 500 a read-only page."""
+    try:
+        return fn()
+    except Exception:
+        logger.exception("device settings: failed to read the config file")
+        return default
+
+
+def _device_memberships() -> list[tuple[settings_schema.MembershipSpec, settings_schema.FieldSpec]]:
+    """(membership, its FieldSpec) pairs — the card reads the description off the spec."""
+    pairs = []
+    for membership in settings_schema.PER_DEVICE_MEMBERSHIPS:
+        field = settings_schema.field_by_path(membership.path)
+        if field is not None:
+            pairs.append((membership, field))
+    return pairs
+
+
+def _device_groups(device_settings: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """The per-MAC object-list groups, each with its editable leaves and current values.
+    `mac` is skipped — the device's identity is the URL, not an input."""
+    groups: list[dict[str, Any]] = []
+    for key, prefix in settings_schema.PER_DEVICE_OBJECT_LISTS:
+        fields = [
+            (f, f.path[len(prefix) :])
+            for f in settings_schema.item_fields(prefix)
+            if f.path != f"{prefix}mac"
+        ]
+        groups.append(
+            {
+                "key": key,
+                "heading": _DEVICE_GROUP_HEADINGS.get(key, key),
+                "fields": fields,
+                # NOT "values" — Jinja would resolve `group.values` to dict.values().
+                "current": device_settings.get(key) or {},
+            }
+        )
+    return groups
 
 
 def _connect(db_path: Path, db_url: str | None = None) -> sqlite3.Connection | MySQLReadConnection:
@@ -334,10 +385,26 @@ def create_app(
             ),
             ([], None),
         )
+        # ADR-0014: the per-device card. Built from the schema so a future per-MAC
+        # field renders here without a template edit. A missing/unreadable config
+        # degrades to an all-off card rather than 500-ing the history page.
+        device_settings = _safe_config(
+            lambda: device_config.read_device_settings(config_path, mac),
+            {},
+        )
         return templates.TemplateResponse(
             request,
             "history.html",
-            {"mac": mac, "events": events, "summary": summary, "active_page": "devices"},
+            {
+                "mac": mac,
+                "events": events,
+                "summary": summary,
+                "active_page": "devices",
+                "device_settings": device_settings,
+                "memberships": _device_memberships(),
+                "device_groups": _device_groups(device_settings),
+                "auth_required": bool(expected_token),
+            },
         )
 
     @app.post("/devices/{mac}/settings")
