@@ -233,3 +233,27 @@ def test_ac_6_write_fence_allows_exactly_two_paths_and_gates_on_token(
     )
     assert r.status_code == 200, r.text
     assert NEW_MAC in load_config_from_path(cfg).allowlist
+
+
+def test_ac_7_malformed_mac_rejected_valid_unknown_mac_accepted(tmp_path: Path) -> None:
+    cfg = write_device_sample(tmp_path)
+    before = cfg.read_bytes()
+    client = device_client(tmp_path, cfg)
+
+    for bad in ("not-a-mac", "aa:bb:cc:dd:ee", "zz:bb:cc:dd:ee:ff", "aabbccddeeff"):
+        r = client.post(f"/devices/{bad}/settings", json={"allowlisted": True})
+        assert r.status_code == 400, f"{bad} should be rejected"
+        assert cfg.read_bytes() == before
+
+    # Rejected *before* any file access — with no config on disk at all it is still a
+    # clean 400, not a read error.
+    missing = tmp_path / "nowhere" / "config.yaml"
+    r = device_client(tmp_path, missing).post(
+        "/devices/not-a-mac/settings", json={"allowlisted": True}
+    )
+    assert r.status_code == 400
+
+    # A well-formed MAC the daemon has never seen is still configurable.
+    r = client.post(f"/devices/{NEW_MAC}/settings", json={"allowlisted": True})
+    assert r.status_code == 200, r.text
+    assert NEW_MAC in load_config_from_path(cfg).allowlist
