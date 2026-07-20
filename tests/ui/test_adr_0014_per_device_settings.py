@@ -24,6 +24,7 @@ from tests.ui._device_data import (
     device_client,
     write_device_sample,
 )
+from tests.ui._settings_data import payload_from
 from wifi_shepard.config import load_config_from_path
 
 
@@ -257,3 +258,27 @@ def test_ac_7_malformed_mac_rejected_valid_unknown_mac_accepted(tmp_path: Path) 
     r = client.post(f"/devices/{NEW_MAC}/settings", json={"allowlisted": True})
     assert r.status_code == 200, r.text
     assert NEW_MAC in load_config_from_path(cfg).allowlist
+
+
+def test_ac_8_override_name_survives_both_write_paths(tmp_path: Path) -> None:
+    cfg = write_device_sample(tmp_path)
+    client = device_client(tmp_path, cfg)
+
+    # The cosmetic label is a first-class schema field now, so neither writer drops it.
+    assert ss.field_by_path("overrides[].name") is not None
+
+    # Regression: a full /settings round-trip used to silently delete `name:` from
+    # every overrides[] entry (config.py filters unknown keys; the UI only emitted
+    # leaves that had a FieldSpec, and list overlays replace wholesale).
+    r = client.post("/settings", json=payload_from(cfg))
+    assert r.status_code == 200, r.text
+    assert "leonardo s22" in cfg.read_text()
+
+    # And the device card can set it.
+    r = client.post(
+        f"/devices/{OVERRIDE_MAC}/settings", json={"overrides": {"name": "garage wled"}}
+    )
+    assert r.status_code == 200, r.text
+    assert "garage wled" in cfg.read_text()
+    # Still parses — the daemon ignores the label (config.py:900 filters it out).
+    assert load_config_from_path(cfg).overrides[0].mac == OVERRIDE_MAC
