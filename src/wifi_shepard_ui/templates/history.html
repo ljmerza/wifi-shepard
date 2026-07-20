@@ -9,6 +9,7 @@
   .dev-settings .field-label { font-weight: 550; font-size: 0.9rem; display: block; margin-bottom: 0.3rem; }
   .dev-settings .field-label .unit { color: var(--fg-muted); font-weight: 400; }
   .dev-settings .field-desc { color: var(--fg-muted); font-size: 0.82rem; margin: 0.35rem 0 0; max-width: 74ch; }
+  .dev-settings .gate-off { color: var(--warn-fg); }
   .dev-settings input[type=text], .dev-settings input[type=number], .dev-settings select {
     font: inherit; padding: 0.4rem 0.55rem; border: 1px solid var(--border);
     border-radius: 8px; background: var(--surface-alt); color: var(--fg); width: 100%; max-width: 22rem;
@@ -114,6 +115,9 @@
       {{ membership.label }}
     </label>
     <p class="field-desc">{{ field.description }}</p>
+    {% if membership.gated_by and not device_settings.get(membership.key ~ "__gate_on") %}
+    <p class="field-desc gate-off">⚠ {{ membership.gate_hint }}</p>
+    {% endif %}
   </div>
   {% endfor %}
 

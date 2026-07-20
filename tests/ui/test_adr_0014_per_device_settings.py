@@ -19,6 +19,7 @@ from tests.ui._device_data import (
     ALLOWLISTED_MAC,
     NEW_MAC,
     OVERRIDE_MAC,
+    SAMPLE,
     device_client,
     write_device_sample,
 )
@@ -73,31 +74,77 @@ def _line_diff(before: str, after: str) -> tuple[list[str], list[str]]:
     return removed, added
 
 
-def test_ac_2_save_touches_only_the_edited_key(tmp_path: Path) -> None:
+# (payload, sections this payload legitimately creates). Everything in ABSENT_SECTIONS
+# that isn't listed here must still be absent afterwards.
+_SURGICAL_CASES = [
+    ({"allowlisted": True}, ()),
+    ({"inactivity_watched": True}, ("inactivity:",)),
+    ({"reboot_eligible": True}, ("reboot:",)),
+    ({"reboot_override": {"ha_entity": "switch.kitchen_plug"}}, ("reboot:",)),
+    ({"overrides": {"signal_dbm_max": -80}}, ()),
+]
+
+
+@pytest.mark.parametrize("payload,creates", _SURGICAL_CASES)
+def test_ac_2_save_touches_only_the_edited_key(
+    tmp_path: Path, payload: dict, creates: tuple[str, ...]
+) -> None:
     cfg = write_device_sample(tmp_path)
+    before = cfg.read_text()
+
+    r = device_client(tmp_path, cfg).post(f"/devices/{NEW_MAC}/settings", json=payload)
+    assert r.status_code == 200, r.text
+    after = cfg.read_text()
+
+    # A surgical write never conjures a section this payload has no business creating.
+    for section in ABSENT_SECTIONS:
+        if section in creates:
+            continue
+        assert section not in after, f"{section} was materialized by {payload}"
+
+    assert "# operator hand comment" in after  # comments preserved
+    assert "${UNIFI_PASSWORD}" in after  # secret placeholder never resolved
+
+    # Nothing is ever *removed*, and every added line belongs to the edit.
+    removed, added = _line_diff(before, after)
+    assert removed == [], f"a surgical save removed lines: {removed}"
+    assert added, "the save should have added something"
+    assert len(added) <= 4, f"expected a small addition, got: {added}"
+
+    # Unrelated settings still parse to their original values.
+    cfg_obj = load_config_from_path(cfg)
+    assert cfg_obj.detection.signal_dbm_max == -70
+    assert cfg_obj.scanner.poll_interval_seconds == 60
+
+
+def test_ac_2_no_op_save_never_rewrites_the_file(tmp_path: Path) -> None:
+    """A payload that changes nothing must not touch the file at all — re-emitting an
+    untouched document is how an unrelated reflow would sneak in."""
+    cfg = write_device_sample(tmp_path)
+    before = cfg.read_bytes()
+    client = device_client(tmp_path, cfg)
+
+    for payload in ({}, {"allowlisted": False}, {"overrides": {}}):
+        r = client.post(f"/devices/{NEW_MAC}/settings", json=payload)
+        assert r.status_code == 200, r.text
+        assert cfg.read_bytes() == before, f"{payload} rewrote the file"
+
+
+def test_ac_2_flat_sequence_style_is_preserved(tmp_path: Path) -> None:
+    """ruamel has no per-file style memory, so the writer must take the file's own list
+    indentation — otherwise an edit reindents every sequence it never touched."""
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text(SAMPLE.replace("\n  - ", "\n- ").replace("\n    ", "\n  "))
     before = cfg.read_text()
 
     r = device_client(tmp_path, cfg).post(
         f"/devices/{NEW_MAC}/settings", json={"allowlisted": True}
     )
     assert r.status_code == 200, r.text
-    after = cfg.read_text()
 
-    # A surgical write never conjures a section the operator left out.
-    for section in ABSENT_SECTIONS:
-        assert section not in after, f"{section} was materialized by a per-device save"
-
-    assert "# operator hand comment" in after  # comments preserved
-    assert "${UNIFI_PASSWORD}" in after  # secret placeholder never resolved
-
-    removed, added = _line_diff(before, after)
-    assert removed == [], f"a surgical save removed lines: {removed}"
-    assert len(added) == 1 and NEW_MAC in added[0], f"expected one added line, got: {added}"
-
-    # Unrelated settings still parse to their original values.
-    cfg_obj = load_config_from_path(cfg)
-    assert cfg_obj.detection.signal_dbm_max == -70
-    assert cfg_obj.scanner.poll_interval_seconds == 60
+    removed, added = _line_diff(before, cfg.read_text())
+    assert removed == [], f"a flat-style config was reindented: {removed}"
+    assert len(added) == 1 and NEW_MAC in added[0]
 
 
 def _override_for(cfg: Path, mac: str):
@@ -159,8 +206,15 @@ def test_ac_4_device_card_renders_every_per_mac_field_from_the_schema(tmp_path: 
             assert f'data-device-leaf="{key}:{leaf}"' in r.text, f"{key}:{leaf} not rendered"
             assert field.label in page
 
-    # Identity comes from the URL, never an editable input.
+    # Identity comes from the URL, never an editable input — and the server enforces
+    # it, so a request for one device can't re-point another device's row.
     assert 'data-device-leaf="overrides:mac"' not in r.text
+    for group in ("overrides", "reboot_override"):
+        rejected = device_client(tmp_path, cfg).post(
+            f"/devices/{OVERRIDE_MAC}/settings", json={group: {"mac": "99:99:99:99:99:99"}}
+        )
+        assert rejected.status_code == 400, f"{group}.mac must not be editable"
+        assert "99:99:99:99:99:99" not in cfg.read_text()
 
     # Pre-filled from the live config.yaml.
     assert 'value="6000"' in r.text  # overrides[].tx_rate_kbps_max
@@ -233,6 +287,17 @@ def test_ac_6_write_fence_allows_exactly_two_paths_and_gates_on_token(
     )
     assert r.status_code == 200, r.text
     assert NEW_MAC in load_config_from_path(cfg).allowlist
+
+    # CSRF: a body a cross-site <form> could emit without a preflight is refused on
+    # its content type, not merely on whether it happens to parse as JSON.
+    before = cfg.read_bytes()
+    r = client.post(
+        f"/devices/{NEW_MAC}/settings",
+        content='{"allowlisted": false}',
+        headers={"Content-Type": "text/plain", "Authorization": "Bearer s3cret"},
+    )
+    assert r.status_code == 415
+    assert cfg.read_bytes() == before
 
 
 def test_ac_7_malformed_mac_rejected_valid_unknown_mac_accepted(tmp_path: Path) -> None:

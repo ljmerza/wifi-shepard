@@ -238,6 +238,11 @@ class MembershipSpec:
     key: str  # per-device payload key, e.g. "allowlisted"
     path: str  # the MAC_LIST FieldSpec path, e.g. "allowlist"
     label: str  # toggle text, phrased for one device rather than a list
+    # The global on/off switch this membership feeds, when there is one. Listing a MAC
+    # under a feature whose `enabled` is false does nothing, so the device card says so
+    # instead of offering a toggle that silently no-ops. None = always in effect.
+    gated_by: str | None = None
+    gate_hint: str = ""
 
 
 # The three per-MAC memberships, in the order the device card renders them.
@@ -247,8 +252,22 @@ PER_DEVICE_MEMBERSHIPS: tuple[MembershipSpec, ...] = (
         "inactivity_watched",
         "detection.inactivity.macs",
         "Watch this device for a wedged session",
+        gated_by="detection.inactivity.enabled",
+        gate_hint=(
+            "The silent-device detector is switched off globally, so this device won't be "
+            "watched until you turn it on under Detection in Settings."
+        ),
     ),
-    MembershipSpec("reboot_eligible", "reboot.eligible", "Allow power-cycling this device"),
+    MembershipSpec(
+        "reboot_eligible",
+        "reboot.eligible",
+        "Allow power-cycling this device",
+        gated_by="reboot.enabled",
+        gate_hint=(
+            "Rebooting is switched off globally, so nothing will be power-cycled until you "
+            "turn it on under Reboot in Settings."
+        ),
+    ),
 )
 
 # The per-MAC object lists, as (per-device payload key, item_prefix) pairs. The

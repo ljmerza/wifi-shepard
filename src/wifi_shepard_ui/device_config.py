@@ -11,10 +11,11 @@ Three rules it shares with the settings save:
 - **Validate with the daemon's own parser.** The whole mutated config goes through
   ``config_io.validate_mapping``, so cross-field rules still fire and the UI cannot
   persist something the daemon would reject.
-- **Coerce through the schema.** Every value passes ``config_io._coerce_scalar`` for
+- **Coerce through the schema.** Every value passes ``config_io.coerce_scalar`` for
   its ``FieldSpec``, so MAC quoting and blank handling match the settings page byte
   for byte.
-- **Write atomically.** Temp file + rename, via ``config_io.write_text_atomic``.
+- **Write atomically.** Temp file + rename, via ``config_io.write_text_atomic`` — and
+  only when something actually changed.
 
 Payload shape (every key optional — an absent key leaves that setting alone)::
 
@@ -27,7 +28,11 @@ Payload shape (every key optional — an absent key leaves that setting alone)::
     }
 
 Within an object-list payload, ``null`` (or "") clears that knob so the device
-inherits the global; omitting it leaves the stored value untouched.
+inherits the global; omitting it leaves the stored value untouched. An unrecognized
+key is an error, not a silent no-op — a typo must not report success.
+
+The device's identity is the URL, never the payload: ``mac`` is rejected as an
+editable leaf so a request for one device can't re-point another device's row.
 """
 
 from __future__ import annotations
@@ -44,10 +49,21 @@ from wifi_shepard.reboot import normalize_mac
 from wifi_shepard_ui import config_io
 from wifi_shepard_ui import settings_schema as ss
 
+# Marks a leaf the payload asked to remove (an explicit null / blank), as distinct
+# from one it didn't mention.
+_CLEAR = object()
+
 
 def is_valid_mac(mac: str) -> bool:
     """True for a canonical ``aa:bb:cc:dd:ee:ff`` MAC, in any case."""
     return bool(_MAC_PATTERN.match(mac.strip()))
+
+
+def payload_keys() -> frozenset[str]:
+    """Every key this module accepts at the top level of a payload."""
+    return frozenset(
+        [m.key for m in ss.PER_DEVICE_MEMBERSHIPS] + [k for k, _ in ss.PER_DEVICE_OBJECT_LISTS]
+    )
 
 
 def _node(doc: Any, parts: tuple[str, ...]) -> Any:
@@ -78,11 +94,15 @@ def _apply_membership(doc: CommentedMap, spec: ss.MembershipSpec, mac: str, on: 
     """Add/remove ``mac`` from the MAC list at ``spec.path``. Returns True if changed."""
     parts = tuple(spec.path.split("."))
     existing = _node(doc, parts)
+    # A present-but-wrong-shaped node (`allowlist: null`, or a scalar typo) is the
+    # operator's data. Refuse rather than silently replacing it with a fresh list.
+    if existing is not None and not isinstance(existing, list):
+        raise ValueError(f"'{spec.path}' in config.yaml is not a list — fix it by hand first")
 
     if on:
         if isinstance(existing, list) and any(_mac_matches(v, mac) for v in existing):
             return False  # already a member — idempotent
-        if not isinstance(existing, list):
+        if existing is None:
             parent = _ensure_parent(doc, parts)
             parent[parts[-1]] = CommentedSeq()
             existing = parent[parts[-1]]
@@ -101,13 +121,30 @@ def _apply_membership(doc: CommentedMap, spec: ss.MembershipSpec, mac: str, on: 
 def _apply_object_row(doc: CommentedMap, key: str, prefix: str, mac: str, values: Any) -> bool:
     """Upsert this MAC's row in the object list at ``prefix``. Returns True if changed.
 
-    A row left with nothing but its ``mac`` is deleted rather than kept as a stub.
+    A row whose last real field is cleared is deleted rather than kept as a stub.
     """
     if not isinstance(values, dict):
         raise ValueError(f"'{key}' must be an object of field names to values")
     spec = ss.object_list_by_prefix(prefix)
     if spec is None:  # pragma: no cover - guarded by the schema
         raise ValueError(f"unknown per-device section '{key}'")
+
+    # Coerce everything up front so an invalid value aborts before the document is
+    # touched, and so `mac` is refused whether or not the row already exists.
+    pending: dict[str, Any] = {}
+    for leaf, value in values.items():
+        if leaf == "mac":
+            raise ValueError(
+                f"'{key}.mac' is not editable — a device's identity is the URL it was posted to"
+            )
+        field = ss.field_by_path(f"{prefix}{leaf}")
+        if field is None:
+            raise ValueError(f"'{leaf}' is not a per-device setting of '{key}'")
+        if value is None:
+            pending[leaf] = _CLEAR
+            continue
+        coerced = config_io.coerce_scalar(field, value)
+        pending[leaf] = _CLEAR if coerced is config_io.OMIT else coerced
 
     location = tuple(spec.location)
     seq = _node(doc, location)
@@ -118,19 +155,8 @@ def _apply_object_row(doc: CommentedMap, key: str, prefix: str, mac: str, values
         )
 
     changed = False
-    pending: dict[str, Any] = {}
-    for leaf, value in values.items():
-        field = ss.field_by_path(f"{prefix}{leaf}")
-        if field is None:
-            raise ValueError(f"'{leaf}' is not a per-device setting of '{key}'")
-        if value is None:
-            pending[leaf] = _CLEAR
-            continue
-        coerced = config_io._coerce_scalar(field, value)
-        pending[leaf] = _CLEAR if coerced is config_io._OMIT else coerced
-
     if row is None:
-        # Nothing to create if the whole payload is clears.
+        # Nothing to create if the payload only clears things (or is empty).
         if all(v is _CLEAR for v in pending.values()):
             return False
         row = CommentedMap()
@@ -142,29 +168,28 @@ def _apply_object_row(doc: CommentedMap, key: str, prefix: str, mac: str, values
         seq.append(row)
         changed = True
 
+    cleared_any = False
     for leaf, value in pending.items():
         if value is _CLEAR:
             if leaf in row:
                 del row[leaf]
-                changed = True
+                changed = cleared_any = True
         elif row.get(leaf) != value:
             row[leaf] = value
             changed = True
 
-    # A row carrying only its identity says nothing — drop it.
-    if set(row) <= {"mac"}:
+    # A row carrying only its identity says nothing — drop it. Only when *this* call
+    # emptied it, so an operator's hand-written `- mac: xx` stub survives a no-op.
+    if cleared_any and set(row) <= {"mac"}:
         seq.remove(row)
         changed = True
     return changed
 
 
-_CLEAR = object()
-
-
 def read_device_settings(path: Path, mac: str) -> dict[str, Any]:
     """The per-MAC slice of config.yaml, shaped for the device card's pre-fill."""
     mac = normalize_mac(mac)
-    raw = config_io._read_raw(path)
+    raw = config_io.read_raw(path)
 
     model: dict[str, Any] = {"mac": mac}
     for membership in ss.PER_DEVICE_MEMBERSHIPS:
@@ -172,6 +197,12 @@ def read_device_settings(path: Path, mac: str) -> dict[str, Any]:
         model[membership.key] = isinstance(entries, list) and any(
             _mac_matches(v, mac) for v in entries
         )
+        # Whether the global feature this membership feeds is switched on. The card
+        # says so, rather than offering a toggle that silently does nothing.
+        if membership.gated_by:
+            model[f"{membership.key}__gate_on"] = bool(
+                _node(raw, tuple(membership.gated_by.split(".")))
+            )
 
     for key, prefix in ss.PER_DEVICE_OBJECT_LISTS:
         spec = ss.object_list_by_prefix(prefix)
@@ -191,12 +222,19 @@ def read_device_settings(path: Path, mac: str) -> dict[str, Any]:
 
 
 def apply_device_settings(path: Path, mac: str, payload: dict[str, Any]) -> bool:
-    """Apply a partial per-device payload to config.yaml. Returns True if the file
-    changed. Raises ValueError if the resulting config would be invalid."""
+    """Apply a partial per-device payload to config.yaml. Returns True if the file was
+    rewritten. Raises ValueError if the payload is unrecognized or the resulting config
+    would be invalid."""
     mac = normalize_mac(mac)
-    yaml_rt = config_io.round_trip_yaml()
+    unknown = sorted(set(payload) - payload_keys())
+    if unknown:
+        raise ValueError(
+            f"unrecognized per-device setting(s): {', '.join(unknown)} "
+            f"(expected one of: {', '.join(sorted(payload_keys()))})"
+        )
 
     before = path.read_text() if path.exists() else ""
+    yaml_rt = config_io.round_trip_yaml(before)
     doc = yaml_rt.load(before) if before.strip() else None
     if not isinstance(doc, CommentedMap):
         doc = CommentedMap()
@@ -209,13 +247,15 @@ def apply_device_settings(path: Path, mac: str, payload: dict[str, Any]) -> bool
         if key in payload:
             touched |= _apply_object_row(doc, key, prefix, mac, payload[key])
 
+    # Nothing changed: never rewrite. Re-emitting an untouched document would reflow
+    # whatever ruamel doesn't round-trip byte-for-byte, so a no-op POST must not write.
+    if not touched:
+        return False
+
     # Validate the WHOLE config, not just the edited fragment, so cross-field rules
     # still fire. CommentedMap/CommentedSeq are dict/list subclasses, so the daemon's
     # parser reads them unchanged.
     config_io.validate_mapping(doc)
 
-    after = config_io.dump_to_string(doc, yaml_rt)
-    if after == before:
-        return False  # nothing to do — keeps a repeat toggle byte-for-byte idempotent
-    config_io.write_text_atomic(path, after)
-    return touched or True
+    config_io.write_text_atomic(path, config_io.dump_to_string(doc, yaml_rt))
+    return True

@@ -54,7 +54,17 @@ def test_ac_9_non_json_body_rejected(tmp_path: Path, monkeypatch) -> None:
     before = cfg.read_bytes()
     client = TestClient(_make_app(tmp_path, cfg))
     r = client.post("/settings", data={"detection.signal_dbm_max": "-99"})
-    assert r.status_code == 400
+    assert r.status_code == 415
+    assert cfg.read_bytes() == before
+
+    # text/plain is the other body a cross-site <form> can emit without a preflight.
+    # It parses as JSON, so the content type is what has to be refused (ADR-0014).
+    r = client.post(
+        "/settings",
+        content='{"scalars": {}}',
+        headers={"Content-Type": "text/plain"},
+    )
+    assert r.status_code == 415
     assert cfg.read_bytes() == before
 
 

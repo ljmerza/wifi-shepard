@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode
 
+import yaml
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 from fastapi.templating import Jinja2Templates
@@ -160,23 +161,38 @@ _DEVICE_GROUP_HEADINGS = {
 }
 
 
-def _safe_config(fn, default):
-    """Run a config-file read, degrading to `default` if config.yaml is missing or
-    malformed — a broken config must never 500 a read-only page."""
-    try:
-        return fn()
-    except Exception:
-        logger.exception("device settings: failed to read the config file")
-        return default
+def _reject_non_json(request: Request) -> JSONResponse | None:
+    """415 unless the body is declared `application/json`.
+
+    This is what makes the CSRF story true rather than aspirational. `request.json()`
+    happily parses a body sent as text/plain — exactly what a cross-site
+    `<form enctype="text/plain">` emits, which is a CORS *simple* request and triggers
+    no preflight. Demanding application/json forces a preflight this app never answers,
+    so a cross-origin page cannot reach either write route.
+    """
+    media_type = request.headers.get("content-type", "").split(";")[0].strip().lower()
+    if media_type != "application/json":
+        return JSONResponse(
+            {"ok": False, "error": "expected Content-Type: application/json"}, status_code=415
+        )
+    return None
 
 
 def _device_memberships() -> list[tuple[settings_schema.MembershipSpec, settings_schema.FieldSpec]]:
-    """(membership, its FieldSpec) pairs — the card reads the description off the spec."""
+    """(membership, its FieldSpec) pairs — the card reads the description off the spec.
+
+    A membership with no FieldSpec is schema drift, not a runtime condition: fail loudly
+    at import/render rather than quietly dropping a control from the card.
+    """
     pairs = []
     for membership in settings_schema.PER_DEVICE_MEMBERSHIPS:
         field = settings_schema.field_by_path(membership.path)
-        if field is not None:
-            pairs.append((membership, field))
+        if field is None:
+            raise RuntimeError(
+                f"per-device membership '{membership.key}' points at {membership.path!r}, "
+                "which has no FieldSpec"
+            )
+        pairs.append((membership, field))
     return pairs
 
 
@@ -395,10 +411,11 @@ def create_app(
         # ADR-0014: the per-device card. Built from the schema so a future per-MAC
         # field renders here without a template edit. A missing/unreadable config
         # degrades to an all-off card rather than 500-ing the history page.
-        device_settings = _safe_config(
-            lambda: device_config.read_device_settings(config_path, mac),
-            {},
-        )
+        try:
+            device_settings = device_config.read_device_settings(config_path, mac)
+        except (OSError, ValueError, yaml.YAMLError):
+            logger.exception("device card: failed to read %s", config_path)
+            device_settings = {}
         return templates.TemplateResponse(
             request,
             "history.html",
@@ -425,6 +442,9 @@ def create_app(
             return JSONResponse(
                 {"ok": False, "error": f"'{mac}' is not a valid MAC address"}, status_code=400
             )
+        wrong_type = _reject_non_json(request)
+        if wrong_type is not None:
+            return wrong_type
         try:
             payload = await request.json()
         except Exception:
@@ -498,6 +518,9 @@ def create_app(
         # JSON-only. A cross-site POST of application/json triggers a CORS preflight
         # this app never answers, so it can't be forged; with the header-carried bearer
         # token (auth middleware above) this write path is CSRF-safe (ADR-0013 AC-9).
+        wrong_type = _reject_non_json(request)
+        if wrong_type is not None:
+            return wrong_type
         try:
             payload = await request.json()
         except Exception:
