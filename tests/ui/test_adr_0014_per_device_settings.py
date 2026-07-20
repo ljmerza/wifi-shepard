@@ -17,6 +17,7 @@ from tests.ui._device_data import (
     ABSENT_SECTIONS,
     ALLOWLISTED_MAC,
     NEW_MAC,
+    OVERRIDE_MAC,
     device_client,
     write_device_sample,
 )
@@ -94,3 +95,35 @@ def test_ac_2_save_touches_only_the_edited_key(tmp_path: Path) -> None:
     cfg_obj = load_config_from_path(cfg)
     assert cfg_obj.detection.signal_dbm_max == -70
     assert cfg_obj.scanner.poll_interval_seconds == 60
+
+
+def _override_for(cfg: Path, mac: str):
+    return next((o for o in load_config_from_path(cfg).overrides if o.mac == mac), None)
+
+
+def test_ac_3_absent_key_unchanged_null_clears_empty_row_removed(tmp_path: Path) -> None:
+    cfg = write_device_sample(tmp_path)
+    client = device_client(tmp_path, cfg)
+
+    # An explicit null clears one knob; the knobs NOT in the payload are untouched,
+    # and so is every setting outside `overrides` (partial-payload semantics).
+    r = client.post(
+        f"/devices/{OVERRIDE_MAC}/settings", json={"overrides": {"tx_rate_kbps_max": None}}
+    )
+    assert r.status_code == 200, r.text
+    row = _override_for(cfg, OVERRIDE_MAC)
+    assert row is not None
+    assert row.tx_rate_kbps_max is None  # cleared -> inherits the global
+    assert row.signal_dbm_max == -65  # absent from the payload -> unchanged
+    assert "leonardo s22" in cfg.read_text()  # cosmetic label untouched
+    assert ALLOWLISTED_MAC in load_config_from_path(cfg).allowlist
+
+    # Clearing the last of a row's fields removes the row rather than leaving a
+    # `- mac: ...` stub behind.
+    r = client.post(
+        f"/devices/{OVERRIDE_MAC}/settings",
+        json={"overrides": {"signal_dbm_max": None, "name": None}},
+    )
+    assert r.status_code == 200, r.text
+    assert _override_for(cfg, OVERRIDE_MAC) is None
+    assert OVERRIDE_MAC not in cfg.read_text()
