@@ -63,11 +63,14 @@ def test_ac_9_only_settings_route_allows_writes(tmp_path: Path, monkeypatch) -> 
     cfg = write_sample(tmp_path)
     app = _make_app(tmp_path, cfg)
 
+    # ADR-0014 widened the fence from one path to two: the settings save and the
+    # per-device save. Everything else stays GET-only.
+    allowed = {"/settings", "/devices/{mac}/settings"}
     write_methods = {"POST", "PUT", "DELETE", "PATCH"}
     for route in app.routes:
         methods = {m.upper() for m in (getattr(route, "methods", None) or set())}
         if methods & write_methods:
-            assert getattr(route, "path", None) == "/settings", (
+            assert getattr(route, "path", None) in allowed, (
                 f"unexpected write route: {getattr(route, 'path', route)} {methods}"
             )
 
