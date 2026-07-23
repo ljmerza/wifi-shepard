@@ -32,11 +32,15 @@ def _rationale_of(record):
 async def test_ac_8_live_kick_logs_rationale(temp_db_path, caplog):
     mac = "aa:bb:cc:dd:ee:08"
     config = build_config(
-        dry_run=False, window_samples=1, signal_dbm_max=-70,
-        tx_rate_kbps_max=12000, retry_pct_max=30,
+        dry_run=False,
+        window_samples=1,
+        signal_dbm_max=-70,
+        tx_rate_kbps_max=12000,
+        retry_pct_max=30,
     )
-    client = make_client(mac=mac, signal=-85, tx_rate_kbps=4000,
-                         tx_retries=60, wifi_tx_attempts=100)
+    client = make_client(
+        mac=mac, signal=-85, tx_rate_kbps=4000, tx_retries=60, wifi_tx_attempts=100
+    )
     db = Database(temp_db_path)
     await db.connect()
     try:
@@ -46,8 +50,9 @@ async def test_ac_8_live_kick_logs_rationale(temp_db_path, caplog):
     finally:
         await db.close()
 
-    kicks = [r for r in caplog.records if r.getMessage() == "kick"
-             and getattr(r, "mac", None) == mac]
+    kicks = [
+        r for r in caplog.records if r.getMessage() == "kick" and getattr(r, "mac", None) == mac
+    ]
     assert len(kicks) == 1, (
         f"AC-8: a live kick must emit exactly one 'kick' log line; "
         f"got {[r.getMessage() for r in caplog.records]}"
@@ -62,11 +67,15 @@ async def test_ac_8_live_kick_logs_rationale(temp_db_path, caplog):
 async def test_ac_8_dry_run_logs_rationale(temp_db_path, caplog):
     mac = "aa:bb:cc:dd:ee:18"
     config = build_config(
-        dry_run=True, window_samples=1, signal_dbm_max=-70,
-        tx_rate_kbps_max=12000, retry_pct_max=30,
+        dry_run=True,
+        window_samples=1,
+        signal_dbm_max=-70,
+        tx_rate_kbps_max=12000,
+        retry_pct_max=30,
     )
-    client = make_client(mac=mac, signal=-85, tx_rate_kbps=4000,
-                         tx_retries=60, wifi_tx_attempts=100)
+    client = make_client(
+        mac=mac, signal=-85, tx_rate_kbps=4000, tx_retries=60, wifi_tx_attempts=100
+    )
     db = Database(temp_db_path)
     await db.connect()
     try:
@@ -76,8 +85,11 @@ async def test_ac_8_dry_run_logs_rationale(temp_db_path, caplog):
     finally:
         await db.close()
 
-    would = [r for r in caplog.records if r.getMessage() == "would_kick"
-             and getattr(r, "mac", None) == mac]
+    would = [
+        r
+        for r in caplog.records
+        if r.getMessage() == "would_kick" and getattr(r, "mac", None) == mac
+    ]
     assert len(would) == 1, "AC-8: a dry-run must emit exactly one 'would_kick' log line"
     rationale = _rationale_of(would[0])
     assert rationale is not None and rationale.get("trigger") == "rf", (

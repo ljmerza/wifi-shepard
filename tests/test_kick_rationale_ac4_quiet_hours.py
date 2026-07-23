@@ -44,9 +44,7 @@ def _config():
 
 def _bad_client(mac):
     # Bad even under the tightened thresholds: tx 4000<8000, retry 60>40, signal -85<-70.
-    return make_client(
-        mac=mac, signal=-85, tx_rate_kbps=4000, tx_retries=60, wifi_tx_attempts=100
-    )
+    return make_client(mac=mac, signal=-85, tx_rate_kbps=4000, tx_retries=60, wifi_tx_attempts=100)
 
 
 @pytest.mark.asyncio
@@ -74,7 +72,9 @@ async def test_ac_4_inside_quiet_hours_records_tightened_limits(temp_db_path):
         await db.close()
 
     r = json.loads(raw)
-    assert r["quiet_hours"] is True, "AC-4: rationale must record quiet_hours=True inside the window"
+    assert r["quiet_hours"] is True, (
+        "AC-4: rationale must record quiet_hours=True inside the window"
+    )
     assert r["thresholds"]["tx_rate_kbps_max"] == 8000, (
         f"AC-4: rationale must record the TIGHTENED tx floor; got {r['thresholds']}"
     )

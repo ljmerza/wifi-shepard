@@ -102,4 +102,6 @@ async def test_ac_2_override_flag_true_when_override_matches(temp_db_path):
         mac=mac, signal=-78, tx_rate_kbps=6000, tx_retries=41, wifi_tx_attempts=100
     )
     r = await _kick_and_read_rationale(temp_db_path, config, client, mac)
-    assert r["override"] is True, "AC-2: override flag must be True when an override matches the MAC"
+    assert r["override"] is True, (
+        "AC-2: override flag must be True when an override matches the MAC"
+    )

@@ -73,9 +73,12 @@ async def test_ac_6_dry_run_rows_written_and_throttled(temp_db_path):
             )
 
         # The throttle is per-MAC: a different MAC writes immediately.
-        await actor.handle(make_client(mac=other, signal=-85, tx_rate_kbps=4000,
-                                       tx_retries=60, wifi_tx_attempts=100),
-                           resolve_thresholds(other, config))
+        await actor.handle(
+            make_client(
+                mac=other, signal=-85, tx_rate_kbps=4000, tx_retries=60, wifi_tx_attempts=100
+            ),
+            resolve_thresholds(other, config),
+        )
         async with aiosqlite.connect(temp_db_path) as conn:
             assert await _dry_run_count(conn, other) == 1, (
                 "AC-6: the throttle must be per-MAC, not global"
