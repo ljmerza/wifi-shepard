@@ -61,11 +61,11 @@ async def test_ac_7_actor_written_dry_run_rows_are_inert(tmp_path):
         ov = views.overview(conn, now=now)
         assert ov.kicks_today == 0, "AC-7: overview kicks_today must exclude dry-run rows"
 
-        rows = {r.mac: r for r in views.list_devices(conn, allowlist=set(), now=now)}
-        row = rows.get(MAC)
-        assert row is not None, "AC-7: the dry-run row should surface the MAC in the devices list"
-        assert row.kick_count == 0 and row.state == "NORMAL", (
-            "AC-7: list_devices must not treat a dry-run row as a real kick"
+        # list_devices unions real-kick + sample MACs; a dry-run-only MAC must not
+        # fabricate a device row (that is exactly the inert guarantee).
+        listed = {r.mac for r in views.list_devices(conn, allowlist=set(), now=now)}
+        assert MAC not in listed, (
+            "AC-7: a dry-run-only MAC must not surface as a real device in list_devices"
         )
     finally:
         conn.close()
