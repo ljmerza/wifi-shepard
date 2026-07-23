@@ -49,7 +49,11 @@ def build_kick_rationale(client: Any, ctx: dict[str, Any], config: Any) -> dict[
         retry_max = ctx.get("retry_pct_max")
         cu_min = ctx.get("ap_cu_total_min")
         attempts = getattr(client, "wifi_tx_attempts", None) or 0
-        retry_pct = round(client.tx_retries * 100.0 / attempts, 1) if attempts > 0 else None
+        # Keep the raw ratio for the breach test (mirrors is_bad_state exactly) and
+        # a rounded copy for display — comparing the rounded value could flip the
+        # verdict at a boundary and disagree with the decision that actually fired.
+        retry_pct_raw = client.tx_retries * 100.0 / attempts if attempts > 0 else None
+        retry_pct = round(retry_pct_raw, 1) if retry_pct_raw is not None else None
         rationale["observed"] = {
             "signal": client.signal,
             "tx_rate_kbps": client.tx_rate_kbps,
@@ -78,7 +82,7 @@ def build_kick_rationale(client: Any, ctx: dict[str, Any], config: Any) -> dict[
             breached.append("signal")
         if tx_max is not None and client.tx_rate_kbps < tx_max:
             breached.append("tx_rate_kbps")
-        if retry_max is not None and attempts > 0 and retry_pct > retry_max:
+        if retry_max is not None and retry_pct_raw is not None and retry_pct_raw > retry_max:
             breached.append("retry_pct")
         rationale["breached"] = breached
     elif trigger == "inactivity":
