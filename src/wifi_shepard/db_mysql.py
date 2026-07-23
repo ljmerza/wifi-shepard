@@ -352,11 +352,12 @@ class MySQLDatabase:
         target_bssid: str | None = None,
         attempt_group: str | None = None,
         trigger: str = "rf",
+        rationale: str | None = None,
     ) -> None:
         await self._execute(
             "INSERT INTO kick_events "
-            "(ts, mac, dry_run, mechanism, target_bssid, attempt_group, `trigger`) "
-            "VALUES (%s, %s, %s, %s, %s, %s, %s)",
+            "(ts, mac, dry_run, mechanism, target_bssid, attempt_group, `trigger`, rationale) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
             (
                 time.time(),
                 mac,
@@ -365,6 +366,7 @@ class MySQLDatabase:
                 target_bssid,
                 attempt_group,
                 trigger,
+                rationale,
             ),
         )
 

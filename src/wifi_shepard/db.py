@@ -35,6 +35,7 @@ class Store(Protocol):
         target_bssid: str | None = None,
         attempt_group: str | None = None,
         trigger: str = "rf",
+        rationale: str | None = None,
     ) -> None: ...
 
     async def insert_reboot(
@@ -334,13 +335,14 @@ class Database:
         target_bssid: str | None = None,
         attempt_group: str | None = None,
         trigger: str = "rf",
+        rationale: str | None = None,
     ) -> None:
         if self._conn is None:
             raise RuntimeError("Database.connect() must be called before insert_kick()")
         await self._conn.execute(
             "INSERT INTO kick_events "
-            "(ts, mac, dry_run, mechanism, target_bssid, attempt_group, trigger) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            "(ts, mac, dry_run, mechanism, target_bssid, attempt_group, trigger, rationale) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 time.time(),
                 mac,
@@ -349,6 +351,7 @@ class Database:
                 target_bssid,
                 attempt_group,
                 trigger,
+                rationale,
             ),
         )
         await self._conn.commit()
