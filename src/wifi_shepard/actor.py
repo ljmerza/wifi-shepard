@@ -162,9 +162,11 @@ class Actor:
         # inactivity/dns paths tag their dict explicitly.
         trigger = thresholds.get("trigger", "rf")
         # ADR-0015: snapshot *why* this kick fired, once, frozen at decision time.
-        # Serialized onto every kick_events row this call writes (fresh, fallback,
-        # dry-run) so the audit trail survives later config edits.
-        rationale_json = json.dumps(build_kick_rationale(client, thresholds, self.config))
+        # The dict feeds the log lines; the JSON string is serialized onto every
+        # kick_events row this call writes (fresh, fallback, dry-run) so the audit
+        # trail survives later config edits.
+        rationale = build_kick_rationale(client, thresholds, self.config)
+        rationale_json = json.dumps(rationale)
 
         if self.config.scanner.dry_run:
             logger.info(
@@ -174,6 +176,7 @@ class Actor:
                     "thresholds": thresholds,
                     "reason": reason,
                     "mechanism": sent_mechanism,
+                    "rationale": rationale,
                 },
             )
             # ADR-0015: persist the would-kick with its rationale so a dry-run soak
@@ -329,6 +332,18 @@ class Actor:
             ap_id=client.ap_id,
             mechanism=sent_mechanism,
             attempt_group=attempt_group,
+        )
+        # ADR-0015: a live kick now explains itself in the logs too, closing the
+        # asymmetry where only the dry-run path logged its reasoning.
+        logger.info(
+            "kick",
+            extra={
+                "mac": mac,
+                "mechanism": sent_mechanism,
+                "trigger": trigger,
+                "attempt_group": attempt_group,
+                "rationale": rationale,
+            },
         )
         if self.ha is not None:
             await self.ha.notify(mac, severity="kick")
