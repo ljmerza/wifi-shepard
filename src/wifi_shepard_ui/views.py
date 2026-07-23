@@ -394,11 +394,25 @@ def device_history(
     a URL shouldn't get a silently-empty timeline.
     """
     events: list[HistoryEvent] = []
-    for ts, dry_run, mechanism, attempt_group, rationale_raw in conn.execute(
-        "SELECT ts, dry_run, mechanism, attempt_group, rationale FROM kick_events "
-        "WHERE mac = ? COLLATE NOCASE ORDER BY ts DESC LIMIT ?",
-        (mac, limit),
-    ):
+    # ADR-0015: rationale is nullable and may be absent entirely on a daemon DB
+    # that predates the column (partial deploy). Degrade to rationale=NULL rather
+    # than 500, exactly like the `name` column does elsewhere.
+    try:
+        kick_rows = conn.execute(
+            "SELECT ts, dry_run, mechanism, attempt_group, rationale FROM kick_events "
+            "WHERE mac = ? COLLATE NOCASE ORDER BY ts DESC LIMIT ?",
+            (mac, limit),
+        ).fetchall()
+    except sqlite3.OperationalError:
+        kick_rows = [
+            (*row, None)
+            for row in conn.execute(
+                "SELECT ts, dry_run, mechanism, attempt_group FROM kick_events "
+                "WHERE mac = ? COLLATE NOCASE ORDER BY ts DESC LIMIT ?",
+                (mac, limit),
+            ).fetchall()
+        ]
+    for ts, dry_run, mechanism, attempt_group, rationale_raw in kick_rows:
         rationale = _load_rationale(rationale_raw)
         if dry_run:
             events.append(
