@@ -125,7 +125,8 @@ CREATE TABLE IF NOT EXISTS kick_events (
     mechanism VARCHAR(32) NOT NULL DEFAULT 'deauth',
     target_bssid VARCHAR(64),
     attempt_group VARCHAR(64),
-    `trigger` VARCHAR(32) NOT NULL DEFAULT 'rf'
+    `trigger` VARCHAR(32) NOT NULL DEFAULT 'rf',
+    rationale TEXT
 )
 """
 
@@ -186,6 +187,8 @@ _KICK_EVENTS_MIGRATIONS = (
     ("target_bssid", "ALTER TABLE kick_events ADD COLUMN target_bssid VARCHAR(64)"),
     ("attempt_group", "ALTER TABLE kick_events ADD COLUMN attempt_group VARCHAR(64)"),
     ("trigger", "ALTER TABLE kick_events ADD COLUMN `trigger` VARCHAR(32) NOT NULL DEFAULT 'rf'"),
+    # ADR-0015: nullable per-kick rationale snapshot (JSON text).
+    ("rationale", "ALTER TABLE kick_events ADD COLUMN rationale TEXT"),
 )
 
 _CLIENT_SAMPLES_MIGRATIONS = (

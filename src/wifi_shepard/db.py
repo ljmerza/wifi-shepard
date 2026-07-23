@@ -114,7 +114,8 @@ CREATE TABLE IF NOT EXISTS kick_events (
     mechanism TEXT NOT NULL DEFAULT 'deauth',
     target_bssid TEXT,
     attempt_group TEXT,
-    trigger TEXT NOT NULL DEFAULT 'rf'
+    trigger TEXT NOT NULL DEFAULT 'rf',
+    rationale TEXT
 );
 """
 
@@ -175,6 +176,9 @@ _KICK_EVENTS_MIGRATIONS = (
     # ADR-0012: attribute each kick. Existing rows predate DNS/inactivity kicks and
     # were all RF deauths, so backfilling to 'rf' is accurate for the live ledger.
     ("trigger", "ALTER TABLE kick_events ADD COLUMN trigger TEXT NOT NULL DEFAULT 'rf'"),
+    # ADR-0015: per-kick rationale snapshot (nullable JSON). Pre-existing rows keep
+    # NULL — they predate the feature and have no captured decision.
+    ("rationale", "ALTER TABLE kick_events ADD COLUMN rationale TEXT"),
 )
 
 # Forward-compatible migration: a client_samples table created before the UI
