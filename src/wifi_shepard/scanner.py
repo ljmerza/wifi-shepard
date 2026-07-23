@@ -138,6 +138,13 @@ class Scanner:
             return
         client_by_mac = {client.mac: client for client in clients}
         allowlist = self.config.allowlist if self.config is not None else ()
+        # ADR-0015: the loudest (MAC, domain) standing per MAC, so a DNS kick can
+        # explain itself with the offending domain / count / resolved threshold.
+        loudest: dict[str, dict[str, Any]] = {}
+        for standing in detector.standings():
+            mac = standing["mac"]
+            if mac not in loudest or standing["count"] > loudest[mac]["count"]:
+                loudest[mac] = standing
         for mac in flagged:
             # The allowlist is the primary safety control; a flagged-but-allowlisted
             # MAC is never kicked (compared canonically, like the scorer does).
@@ -148,7 +155,13 @@ class Scanner:
                 # Flagged from accumulated history but not present this cycle
                 # (disconnected) — nothing to kick.
                 continue
-            await pipeline.actor.handle(client, {"trigger": "dns_thrash"})
+            ctx: dict[str, Any] = {"trigger": "dns_thrash"}
+            top = loudest.get(mac)
+            if top is not None:
+                ctx["domain"] = top["domain"]
+                ctx["query_count"] = top["count"]
+                ctx["threshold"] = top["threshold"]
+            await pipeline.actor.handle(client, ctx)
 
     async def _persist_dns_observability(self, detector: Any) -> None:
         # ADR-0012: write a per-poll health heartbeat (one row per DNS instance).
