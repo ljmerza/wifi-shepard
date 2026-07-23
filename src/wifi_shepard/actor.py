@@ -21,6 +21,11 @@ logger = logging.getLogger("wifi_shepard.actor")
 # can render what it understands and degrade on the rest.
 _RATIONALE_VERSION = 1
 
+# ADR-0015: throttle interval for persisted dry-run (would-kick) rows when no
+# backoff cooldown schedule is configured. Keeps a dry-run soak's ledger at
+# roughly live-kick density instead of one row per bad-state client per cycle.
+_DRY_RUN_DEFAULT_THROTTLE_SECONDS = 300
+
 
 def build_kick_rationale(client: Any, ctx: dict[str, Any], config: Any) -> dict[str, Any]:
     """Snapshot *why* this kick fired, frozen at decision time (ADR-0015).
@@ -133,6 +138,10 @@ class Actor:
         # In-flight kick bookkeeping: the BTM->deauth fallback map (ADR-0003 AC-4)
         # and the post-kick roam-check map (ADR-0003 AC-6). See pending.py.
         self.pending = PendingKicks()
+        # ADR-0015: per-MAC wall-clock of the last persisted dry-run row, to throttle
+        # would-kick writes to the first-cooldown interval. In-memory by design — a
+        # restart re-arming one extra row per MAC is harmless.
+        self._dry_run_last_write: dict[str, float] = {}
 
     async def handle(self, client: Any, thresholds: dict[str, Any]) -> None:
         mac = client.mac
@@ -167,6 +176,23 @@ class Actor:
                     "mechanism": sent_mechanism,
                 },
             )
+            # ADR-0015: persist the would-kick with its rationale so a dry-run soak
+            # is reviewable in the UI, throttled per-MAC to the first-cooldown
+            # interval (the dry-run path returns before backoff, so without this a
+            # permanently-bad client would write one row every scan cycle).
+            cooldowns = tuple(self.config.backoff.cooldowns_seconds)
+            interval = cooldowns[0] if cooldowns else _DRY_RUN_DEFAULT_THROTTLE_SECONDS
+            now = self.wall_now_fn()
+            last = self._dry_run_last_write.get(mac)
+            if last is None or now - last >= interval:
+                self._dry_run_last_write[mac] = now
+                await self.db.insert_kick(
+                    mac=mac,
+                    dry_run=True,
+                    mechanism=sent_mechanism,
+                    trigger=trigger,
+                    rationale=rationale_json,
+                )
             return
 
         if self.backoff is not None and self.backoff.should_quarantine(mac):
