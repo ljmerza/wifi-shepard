@@ -52,12 +52,20 @@ def build_kick_rationale(client: Any, ctx: dict[str, Any], config: Any) -> dict[
             "radio": client.radio,
             "ap_cu_total": client.ap_cu_total,
         }
-        rationale["thresholds"] = {
-            "signal_dbm_max": signal_max,
-            "tx_rate_kbps_max": tx_max,
-            "retry_pct_max": retry_max,
-            "ap_cu_total_min": cu_min,
-        }
+        # Only active criteria are recorded — a disabled one (ADR-0009 `null`)
+        # must not imply it was tested, and ap_cu_total_min appears only when the
+        # saturation gate is on (>0). This keeps `thresholds` and `breached` in
+        # lockstep: a key is present here iff it can appear in `breached`.
+        thresholds: dict[str, Any] = {}
+        if signal_max is not None:
+            thresholds["signal_dbm_max"] = signal_max
+        if tx_max is not None:
+            thresholds["tx_rate_kbps_max"] = tx_max
+        if retry_max is not None:
+            thresholds["retry_pct_max"] = retry_max
+        if cu_min:
+            thresholds["ap_cu_total_min"] = cu_min
+        rationale["thresholds"] = thresholds
         # Mirror is_bad_state's per-criterion test on the witness sample, which
         # (by construction) breaches exactly the active criteria.
         breached: list[str] = []
