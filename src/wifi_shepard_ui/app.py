@@ -191,6 +191,7 @@ def create_app(
     templates.env.filters["radio_band"] = _radio_band
     templates.env.filters["spark_points"] = _spark_points
     templates.env.filters["spark_area"] = _spark_area
+    templates.env.filters["kick_why"] = views.summarize_rationale  # ADR-0015
     templates.env.globals["qs"] = _merge_query
 
     # Snapshot the auto-refresh interval at construction time (matches the env
