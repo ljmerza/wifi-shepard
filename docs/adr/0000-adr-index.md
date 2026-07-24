@@ -28,4 +28,5 @@
 | [0011](./0011-dns-thrash-detection-pihole.md) | DNS-Thrash Detection via an Optional Pi-hole Data Source | Accepted | 2026-07-15 |
 | [0012](./0012-dns-observability-persistence.md) | DNS/Pi-hole Observability Persistence & UI Surface | Accepted | 2026-07-16 |
 | [0013](./0013-settings-ui-write-paths.md) | Settings UI Write Paths — Editable Config via the Sidecar with Env-Var Secret References and Daemon File-Watch Reload | Implemented | 2026-07-16 |
+| [0014](./0014-per-device-settings-editing.md) | Per-Device Settings Editing — Device-Centric Write Surface over the Same config.yaml | Accepted | 2026-07-19 |
 | [0015](./0015-kick-rationale-explainability.md) | Kick Rationale — Persist and Surface Why Each Kick Fired | Accepted | 2026-07-23 |
