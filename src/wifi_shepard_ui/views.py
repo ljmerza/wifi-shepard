@@ -7,6 +7,7 @@ and render the dataclasses they return — no SQL leaks into `app.py`.
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from dataclasses import dataclass
 
@@ -88,6 +89,9 @@ class HistoryEvent:
     detail: str  # human-readable line of context
     mechanism: str | None = None  # 'deauth' / 'btm' / 'deauth_fallback' for kick rows
     attempt_group: str | None = None  # UUID linking BTM+deauth_fallback pairs (ADR-0003 AC-7)
+    # ADR-0015: parsed kick_events.rationale for kick rows (None for samples, for a
+    # NULL/malformed value, or when the daemon predates the rationale column).
+    rationale: dict | None = None
 
 
 @dataclass(frozen=True)
@@ -166,6 +170,56 @@ class DnsKick:
     mechanism: str | None
     dry_run: bool
     name: str | None = None
+
+
+# ADR-0015: plain-English labels for each breached RF criterion. The one-line
+# summary uses words; the exact observed-vs-threshold numbers live in the
+# template's expandable breakdown, so a value appears once on the page.
+_BREACH_LABELS: dict[str, str] = {
+    "signal": "weak signal",
+    "tx_rate_kbps": "low tx-rate",
+    "retry_pct": "high retries",
+}
+
+
+def _load_rationale(raw) -> dict | None:
+    """Parse a kick_events.rationale cell fail-soft (ADR-0015).
+
+    NULL, empty, or malformed JSON -> None, so the timeline renders a dash rather
+    than crashing on a partial-deploy or a truncated blob.
+    """
+    if not raw:
+        return None
+    try:
+        value = json.loads(raw)
+    except (ValueError, TypeError):
+        return None
+    return value if isinstance(value, dict) else None
+
+
+def summarize_rationale(rationale: dict | None) -> str:
+    """One-line plain-English 'why' for a kick (ADR-0015).
+
+    Words only — the numbers live in the template's observed-vs-threshold
+    breakdown. Unknown/absent rationale yields an empty string (rendered as a dash).
+    """
+    if not rationale:
+        return ""
+    trigger = rationale.get("trigger", "rf")
+    if trigger == "rf":
+        labels = [_BREACH_LABELS.get(c, c) for c in rationale.get("breached", [])]
+        text = ", ".join(labels) if labels else "RF thresholds breached"
+        if "ap_cu_total_min" in (rationale.get("thresholds") or {}):
+            text += " on a saturated AP"
+        if rationale.get("quiet_hours"):
+            text += " · quiet-hours limits"
+        return text
+    if trigger == "inactivity":
+        return "no traffic (associated but idle)"
+    if trigger == "dns_thrash":
+        domain = rationale.get("domain")
+        return f"DNS thrash on {domain}" if domain else "DNS thrash"
+    return str(trigger)
 
 
 def derive_state(*, kick_count: int, last_kick_ts: float | None, now: float) -> str:
@@ -340,11 +394,26 @@ def device_history(
     a URL shouldn't get a silently-empty timeline.
     """
     events: list[HistoryEvent] = []
-    for ts, dry_run, mechanism, attempt_group in conn.execute(
-        "SELECT ts, dry_run, mechanism, attempt_group FROM kick_events "
-        "WHERE mac = ? COLLATE NOCASE ORDER BY ts DESC LIMIT ?",
-        (mac, limit),
-    ):
+    # ADR-0015: rationale is nullable and may be absent entirely on a daemon DB
+    # that predates the column (partial deploy). Degrade to rationale=NULL rather
+    # than 500, exactly like the `name` column does elsewhere.
+    try:
+        kick_rows = conn.execute(
+            "SELECT ts, dry_run, mechanism, attempt_group, rationale FROM kick_events "
+            "WHERE mac = ? COLLATE NOCASE ORDER BY ts DESC LIMIT ?",
+            (mac, limit),
+        ).fetchall()
+    except sqlite3.OperationalError:
+        kick_rows = [
+            (*row, None)
+            for row in conn.execute(
+                "SELECT ts, dry_run, mechanism, attempt_group FROM kick_events "
+                "WHERE mac = ? COLLATE NOCASE ORDER BY ts DESC LIMIT ?",
+                (mac, limit),
+            ).fetchall()
+        ]
+    for ts, dry_run, mechanism, attempt_group, rationale_raw in kick_rows:
+        rationale = _load_rationale(rationale_raw)
         if dry_run:
             events.append(
                 HistoryEvent(
@@ -353,6 +422,7 @@ def device_history(
                     detail="would-kick (dry-run)",
                     mechanism=mechanism,
                     attempt_group=attempt_group,
+                    rationale=rationale,
                 )
             )
         else:
@@ -363,6 +433,7 @@ def device_history(
                     detail="kick",
                     mechanism=mechanism,
                     attempt_group=attempt_group,
+                    rationale=rationale,
                 )
             )
 

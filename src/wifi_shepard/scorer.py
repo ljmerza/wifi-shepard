@@ -70,13 +70,20 @@ class Scorer:
         # ADR-0007: during quiet hours, tighten to the stricter override thresholds
         # (per-field more-conservative-wins) before testing bad-state.
         quiet_hours = self.config.quiet_hours
+        quiet_applied = False
         if quiet_hours is not None and quiet_hours_active(self.wall_now_fn(), quiet_hours):
             thresholds = apply_quiet_hours(thresholds, quiet_hours)
+            quiet_applied = True
         radios = self.config.detection.radios
         window = self._window(mac)
         window.append(client)
         if len(window) < self.config.scanner.window_samples:
             return None
         if is_bad_state(list(window), thresholds, radios):
+            # ADR-0015: stamp whether tightening was applied so the actor can record
+            # it truthfully — re-deriving it downstream would disagree at a window
+            # boundary and would mislabel the non-RF paths (which never tighten).
+            if quiet_applied:
+                thresholds["quiet_hours"] = True
             return thresholds
         return None
