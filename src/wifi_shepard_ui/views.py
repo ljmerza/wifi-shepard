@@ -381,6 +381,32 @@ def filter_devices(
     return out
 
 
+# /devices/{mac} timeline filter vocabulary. Maps a URL ?kind= value to the set
+# of HistoryEvent.kind values it keeps. "kick" folds real and dry-run kicks
+# together (both are kick-type rows). Unknown values are ignored (treated as
+# "no filter"), exactly like FILTER_STATES on the device list — the param is a
+# hand-editable URL param and a typo should show the full timeline, not 500.
+EVENT_KINDS: dict[str, frozenset[str]] = {
+    "kick": frozenset({"kick", "kick_dry_run"}),
+    "sample": frozenset({"sample"}),
+}
+
+
+def filter_events(events: list[HistoryEvent], *, kind: str = "") -> list[HistoryEvent]:
+    """Keep only the device-detail timeline rows matching a ?kind= filter.
+
+    - kind="kick": real + dry-run kick rows.
+    - kind="sample": client_samples rows.
+    - "" or an unknown value: no filter — return every event unchanged.
+
+    Order is preserved, so the caller's newest-first sort survives.
+    """
+    keep = EVENT_KINDS.get(kind.strip().lower())
+    if keep is None:
+        return events
+    return [e for e in events if e.kind in keep]
+
+
 def device_history(
     conn: sqlite3.Connection,
     *,
