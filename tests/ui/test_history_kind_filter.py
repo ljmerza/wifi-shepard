@@ -7,6 +7,8 @@ an unknown value falls back to the full unfiltered timeline (never 500s).
 
 from __future__ import annotations
 
+import ast
+import inspect
 import re
 import time
 from pathlib import Path
@@ -58,6 +60,40 @@ def test_filter_events_empty_and_unknown_are_noops() -> None:
 def test_filter_events_is_case_insensitive_and_preserves_order() -> None:
     out = views.filter_events(_events(), kind="KICK")
     assert [e.kind for e in out] == ["kick", "kick_dry_run"]
+
+
+def test_event_kinds_partitions_every_kind_the_read_model_emits() -> None:
+    """EVENT_KINDS must claim every HistoryEvent.kind views.py can produce.
+
+    A kind no chip claims stays visible under "All" but becomes silently
+    unfilterable — the kind of gap that ships unnoticed. Reading the literals
+    back out of the source keeps this honest: add a fourth kind and this fails
+    until EVENT_KINDS names it.
+    """
+    calls = [
+        node
+        for node in ast.walk(ast.parse(inspect.getsource(views)))
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "HistoryEvent"
+    ]
+    assert calls, "no HistoryEvent(...) construction found — did the read model move?"
+
+    emitted = set()
+    for call in calls:
+        kw = next((k for k in call.keywords if k.arg == "kind"), None)
+        assert kw is not None and isinstance(kw.value, ast.Constant), (
+            f"HistoryEvent at views.py:{call.lineno} must pass kind= as a literal, "
+            "otherwise this guard goes blind to it"
+        )
+        emitted.add(kw.value.value)
+
+    claimed = set().union(*views.EVENT_KINDS.values())
+    assert emitted == claimed
+
+    # Claimed sets must not overlap, or All/Kicks/Samples stops being a
+    # partition and a row would answer to two chips at once.
+    assert sum(len(v) for v in views.EVENT_KINDS.values()) == len(claimed)
 
 
 # ---- /devices/{mac} route level -------------------------------------------
