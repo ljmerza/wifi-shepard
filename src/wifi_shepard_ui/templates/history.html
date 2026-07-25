@@ -2,7 +2,7 @@
 {% block title %}{{ mac }} — wifi-shepard{% endblock %}
 {% block body %}
 <h1>History <span class="mac-title">{{ mac }}</span>{% if summary and summary.name %} <span class="mac-title">· {{ summary.name }}</span>{% endif %}</h1>
-{% if events %}
+{% if total %}
 {% if summary %}
 <div class="tiles" style="margin-bottom:1rem">
   <div class="tile">
@@ -10,11 +10,11 @@
     <div class="value"><span class="badge badge-{{ summary.state | lower }}">{{ summary.state }}</span></div>
     {% if summary.allowlisted %}<div class="tile-note">allowlisted — never kicked</div>{% endif %}
   </div>
-  <div class="tile{% if summary.state == 'QUARANTINE' %} is-alert{% endif %}">
+  <a class="tile{% if summary.state == 'QUARANTINE' %} is-alert{% endif %}" href="{{ qs(params, kind='kick') }}">
     <div class="label">Kicks</div>
     <div class="value">{{ summary.kick_count }}</div>
     {% if summary.dry_run_count %}<div class="tile-note">+{{ summary.dry_run_count }} dry-run</div>{% endif %}
-  </div>
+  </a>
   <div class="tile">
     <div class="label">Last kick</div>
     <div class="value value-sm" title="{{ summary.last_kick_ts | int if summary.last_kick_ts else '' }}">{{ summary.last_kick_ts | fmt_ts }}</div>
@@ -32,9 +32,23 @@
 {% endif %}
 <div class="card">
   <div class="card-head">
-    <h2>{{ events | length }} event{{ "" if events | length == 1 else "s" }}</h2>
+    {% if filtered %}
+    <h2>{{ events | length }} of {{ total }} event{{ "" if total == 1 else "s" }}</h2>
+    <span class="card-note"><a href="{{ qs(params, kind='') }}">Clear filter</a> · Newest first · rows sharing an attempt group are one logical action</span>
+    {% else %}
+    <h2>{{ total }} event{{ "" if total == 1 else "s" }}</h2>
     <span class="card-note">Newest first · rows sharing an attempt group are one logical action</span>
+    {% endif %}
   </div>
+  <div class="filter-bar" role="group" aria-label="Filter events">
+    <div class="filter-row">
+      <span class="filter-label">Show</span>
+      <a href="{{ qs(params, kind='') }}"{% if not kind %} class="on"{% endif %}>All</a>
+      <a href="{{ qs(params, kind='kick') }}"{% if kind == "kick" %} class="on"{% endif %}>Kicks</a>
+      <a href="{{ qs(params, kind='sample') }}"{% if kind == "sample" %} class="on"{% endif %}>Samples</a>
+    </div>
+  </div>
+  {% if events %}
   <div class="table-wrap">
     <table>
       <thead>
@@ -80,6 +94,9 @@
       </tbody>
     </table>
   </div>
+  {% else %}
+  <p class="empty">No events match the current filter. <a href="{{ qs(params, kind='') }}">Clear filter</a></p>
+  {% endif %}
 </div>
 {% else %}
 <div class="card">

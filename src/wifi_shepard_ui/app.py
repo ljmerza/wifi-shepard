@@ -325,7 +325,7 @@ def create_app(
         )
 
     @app.get("/devices/{mac}", response_class=HTMLResponse)
-    def device_history(request: Request, mac: str):
+    def device_history(request: Request, mac: str, kind: str = ""):
         now = time.time()
         allowed_macs = config_io.read_allowlist(config_path)
         events, summary = _safe_read(
@@ -335,10 +335,23 @@ def create_app(
             ),
             ([], None),
         )
+        # ?kind= filters the merged timeline (kick / sample); an unknown value
+        # canonicalizes to "" and renders the full timeline, matching /devices.
+        kind = kind.strip().lower() if kind.strip().lower() in views.EVENT_KINDS else ""
+        shown = views.filter_events(events, kind=kind)
         return templates.TemplateResponse(
             request,
             "history.html",
-            {"mac": mac, "events": events, "summary": summary, "active_page": "devices"},
+            {
+                "mac": mac,
+                "events": shown,
+                "total": len(events),
+                "summary": summary,
+                "kind": kind,
+                "params": {"kind": kind},
+                "filtered": bool(kind),
+                "active_page": "devices",
+            },
         )
 
     @app.get("/dns", response_class=HTMLResponse)
