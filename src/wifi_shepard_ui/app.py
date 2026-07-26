@@ -281,6 +281,7 @@ def create_app(
     templates.env.filters["radio_band"] = _radio_band
     templates.env.filters["spark_points"] = _spark_points
     templates.env.filters["spark_area"] = _spark_area
+    templates.env.filters["kick_why"] = views.summarize_rationale  # ADR-0015
     templates.env.globals["qs"] = _merge_query
 
     # Snapshot the auto-refresh interval at construction time (matches the env
@@ -415,7 +416,7 @@ def create_app(
         )
 
     @app.get("/devices/{mac}", response_class=HTMLResponse)
-    def device_history(request: Request, mac: str):
+    def device_history(request: Request, mac: str, kind: str = ""):
         now = time.time()
         # ADR-0014: the per-device card is built from the schema, so a future per-MAC
         # field renders here without a template edit. Both config reads are guarded
@@ -435,13 +436,21 @@ def create_app(
             ),
             ([], None),
         )
+        # ?kind= filters the merged timeline (kick / sample); an unknown value
+        # canonicalizes to "" and renders the full timeline, matching /devices.
+        kind = kind.strip().lower() if kind.strip().lower() in views.EVENT_KINDS else ""
+        shown = views.filter_events(events, kind=kind)
         return templates.TemplateResponse(
             request,
             "history.html",
             {
                 "mac": mac,
-                "events": events,
+                "events": shown,
+                "total": len(events),
                 "summary": summary,
+                "kind": kind,
+                "params": {"kind": kind},
+                "filtered": bool(kind),
                 "active_page": "devices",
                 "device_settings": device_settings,
                 "memberships": _device_memberships(),

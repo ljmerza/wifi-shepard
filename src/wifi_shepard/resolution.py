@@ -31,6 +31,15 @@ def resolve_thresholds(mac: str, config: Any) -> dict[str, Any]:
     return resolved
 
 
+def mac_has_override(mac: str, config: Any) -> bool:
+    """True when an ``overrides:`` entry applies to ``mac`` (ADR-0015).
+
+    Compared with the same raw equality ``resolve_thresholds`` uses, so the kick
+    rationale's ``override`` flag cannot claim a match the resolver didn't make.
+    """
+    return any(override.mac == mac for override in config.overrides)
+
+
 def resolve_kick_mechanism(mac: str, config: Any) -> str:
     """Per-MAC override > global default. ADR-0003 AC-5 (mirrors ADR-0001 AC-6)."""
     for override in config.overrides:

@@ -37,7 +37,7 @@
 
 {% block body %}
 <h1>History <span class="mac-title">{{ mac }}</span>{% if summary and summary.name %} <span class="mac-title">· {{ summary.name }}</span>{% endif %}</h1>
-{% if events %}
+{% if total %}
 {% if summary %}
 <div class="tiles" style="margin-bottom:1rem">
   <div class="tile">
@@ -45,11 +45,11 @@
     <div class="value"><span class="badge badge-{{ summary.state | lower }}">{{ summary.state }}</span></div>
     {% if summary.allowlisted %}<div class="tile-note">allowlisted — never kicked</div>{% endif %}
   </div>
-  <div class="tile{% if summary.state == 'QUARANTINE' %} is-alert{% endif %}">
+  <a class="tile{% if summary.state == 'QUARANTINE' %} is-alert{% endif %}" href="{{ qs(params, kind='kick') }}">
     <div class="label">Kicks</div>
     <div class="value">{{ summary.kick_count }}</div>
     {% if summary.dry_run_count %}<div class="tile-note">+{{ summary.dry_run_count }} dry-run</div>{% endif %}
-  </div>
+  </a>
   <div class="tile">
     <div class="label">Last kick</div>
     <div class="value value-sm" title="{{ summary.last_kick_ts | int if summary.last_kick_ts else '' }}">{{ summary.last_kick_ts | fmt_ts }}</div>
@@ -67,13 +67,27 @@
 {% endif %}
 <div class="card">
   <div class="card-head">
-    <h2>{{ events | length }} event{{ "" if events | length == 1 else "s" }}</h2>
+    {% if filtered %}
+    <h2>{{ events | length }} of {{ total }} event{{ "" if total == 1 else "s" }}</h2>
+    <span class="card-note"><a href="{{ qs(params, kind='') }}">Clear filter</a> · Newest first · rows sharing an attempt group are one logical action</span>
+    {% else %}
+    <h2>{{ total }} event{{ "" if total == 1 else "s" }}</h2>
     <span class="card-note">Newest first · rows sharing an attempt group are one logical action</span>
+    {% endif %}
   </div>
+  <div class="filter-bar" role="group" aria-label="Filter events">
+    <div class="filter-row">
+      <span class="filter-label">Show</span>
+      <a href="{{ qs(params, kind='') }}"{% if not kind %} class="on"{% endif %}>All</a>
+      <a href="{{ qs(params, kind='kick') }}"{% if kind == "kick" %} class="on"{% endif %}>Kicks</a>
+      <a href="{{ qs(params, kind='sample') }}"{% if kind == "sample" %} class="on"{% endif %}>Samples</a>
+    </div>
+  </div>
+  {% if events %}
   <div class="table-wrap">
     <table>
       <thead>
-        <tr><th>When (UTC)</th><th>Kind</th><th>Mechanism</th><th>Attempt group</th><th>Detail</th></tr>
+        <tr><th>When (UTC)</th><th>Kind</th><th>Mechanism</th><th>Attempt group</th><th>Why</th><th>Detail</th></tr>
       </thead>
       <tbody>
         {% for ev in events %}
@@ -88,12 +102,36 @@
           </td>
           <td data-label="Mechanism" class="mechanism">{% if ev.mechanism %}<span class="badge badge-neutral">{{ ev.mechanism }}</span>{% endif %}</td>
           <td data-label="Attempt group" class="attempt-group group-id" title="{{ ev.attempt_group or '' }}">{% if ev.attempt_group %}{{ ev.attempt_group[:8] }}…{% endif %}</td>
+          <td data-label="Why" class="why">
+            {%- if ev.rationale -%}
+            <span class="why-summary">{{ ev.rationale | kick_why }}</span>
+            {%- set o = ev.rationale.observed -%}
+            {%- set t = ev.rationale.thresholds -%}
+            <details class="why-detail">
+              <summary>details</summary>
+              <ul class="why-list">
+                {%- if o -%}
+                {%- if 'signal_dbm_max' in (t or {}) %}<li>signal {{ o.signal }} dBm / limit {{ t.signal_dbm_max }}</li>{% endif -%}
+                {%- if 'tx_rate_kbps_max' in (t or {}) %}<li>tx rate {{ o.tx_rate_kbps }} kbps / limit {{ t.tx_rate_kbps_max }}</li>{% endif -%}
+                {%- if 'retry_pct_max' in (t or {}) %}<li>retries {{ o.retry_pct }}% / limit {{ t.retry_pct_max }}%</li>{% endif -%}
+                {%- if 'ap_cu_total_min' in (t or {}) %}<li>AP util {{ o.ap_cu_total }}% / floor {{ t.ap_cu_total_min }}%</li>{% endif -%}
+                {%- endif -%}
+                {%- if ev.rationale.trigger == 'inactivity' %}<li>{{ ev.rationale.window_bytes }} bytes over {{ ev.rationale.window_samples }} samples / min {{ ev.rationale.min_bytes_per_window }}</li>{% endif -%}
+                {%- if ev.rationale.trigger == 'dns_thrash' %}<li>{{ ev.rationale.query_count }} queries to {{ ev.rationale.domain }} / limit {{ ev.rationale.threshold }}</li>{% endif -%}
+                {%- if ev.rationale.quiet_hours %}<li>quiet-hours thresholds applied</li>{% endif -%}
+              </ul>
+            </details>
+            {%- else -%}—{%- endif -%}
+          </td>
           <td data-label="Detail" class="mono muted">{{ ev.detail }}</td>
         </tr>
         {% endfor %}
       </tbody>
     </table>
   </div>
+  {% else %}
+  <p class="empty">No events match the current filter. <a href="{{ qs(params, kind='') }}">Clear filter</a></p>
+  {% endif %}
 </div>
 {% else %}
 <div class="card">

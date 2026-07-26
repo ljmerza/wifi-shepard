@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 import time
 import uuid
@@ -12,9 +13,87 @@ from .db import Store
 from .notify import Notifier
 from .pending import PendingKicks
 from .rate_limit import KickRateLimiter
-from .resolution import resolve_caps, resolve_kick_mechanism
+from .resolution import mac_has_override, resolve_caps, resolve_kick_mechanism
 
 logger = logging.getLogger("wifi_shepard.actor")
+
+# ADR-0015 rationale envelope version. Bump when the shape changes so an older UI
+# can render what it understands and degrade on the rest.
+_RATIONALE_VERSION = 1
+
+# ADR-0015: throttle interval for persisted dry-run (would-kick) rows when no
+# backoff cooldown schedule is configured. Keeps a dry-run soak's ledger at
+# roughly live-kick density instead of one row per bad-state client per cycle.
+_DRY_RUN_DEFAULT_THROTTLE_SECONDS = 300
+
+
+def build_kick_rationale(client: Any, ctx: dict[str, Any], config: Any) -> dict[str, Any]:
+    """Snapshot *why* this kick fired, frozen at decision time (ADR-0015).
+
+    ``ctx`` is the scorer/detector decision dict: for an RF flag it carries the
+    resolved (and quiet-hours-tightened) thresholds; inactivity/DNS flags carry
+    their own evidence keys plus ``trigger``. The envelope stays truthful after a
+    later config edit because it records the values actually in force now.
+    """
+    trigger = ctx.get("trigger", "rf")
+    rationale: dict[str, Any] = {
+        "v": _RATIONALE_VERSION,
+        "trigger": trigger,
+        "window_samples": ctx.get("window_samples", config.scanner.window_samples),
+        "quiet_hours": bool(ctx.get("quiet_hours", False)),
+        "override": mac_has_override(client.mac, config),
+    }
+    if trigger == "rf":
+        signal_max = ctx.get("signal_dbm_max")
+        tx_max = ctx.get("tx_rate_kbps_max")
+        retry_max = ctx.get("retry_pct_max")
+        cu_min = ctx.get("ap_cu_total_min")
+        attempts = getattr(client, "wifi_tx_attempts", None) or 0
+        # Keep the raw ratio for the breach test (mirrors is_bad_state exactly) and
+        # a rounded copy for display — comparing the rounded value could flip the
+        # verdict at a boundary and disagree with the decision that actually fired.
+        retry_pct_raw = client.tx_retries * 100.0 / attempts if attempts > 0 else None
+        retry_pct = round(retry_pct_raw, 1) if retry_pct_raw is not None else None
+        rationale["observed"] = {
+            "signal": client.signal,
+            "tx_rate_kbps": client.tx_rate_kbps,
+            "retry_pct": retry_pct,
+            "radio": client.radio,
+            "ap_cu_total": client.ap_cu_total,
+        }
+        # Only active criteria are recorded — a disabled one (ADR-0009 `null`)
+        # must not imply it was tested, and ap_cu_total_min appears only when the
+        # saturation gate is on (>0). This keeps `thresholds` and `breached` in
+        # lockstep: a key is present here iff it can appear in `breached`.
+        thresholds: dict[str, Any] = {}
+        if signal_max is not None:
+            thresholds["signal_dbm_max"] = signal_max
+        if tx_max is not None:
+            thresholds["tx_rate_kbps_max"] = tx_max
+        if retry_max is not None:
+            thresholds["retry_pct_max"] = retry_max
+        if cu_min:
+            thresholds["ap_cu_total_min"] = cu_min
+        rationale["thresholds"] = thresholds
+        # Mirror is_bad_state's per-criterion test on the witness sample, which
+        # (by construction) breaches exactly the active criteria.
+        breached: list[str] = []
+        if signal_max is not None and client.signal < signal_max:
+            breached.append("signal")
+        if tx_max is not None and client.tx_rate_kbps < tx_max:
+            breached.append("tx_rate_kbps")
+        if retry_max is not None and retry_pct_raw is not None and retry_pct_raw > retry_max:
+            breached.append("retry_pct")
+        rationale["breached"] = breached
+    elif trigger == "inactivity":
+        for key in ("window_bytes", "min_bytes_per_window"):
+            if key in ctx:
+                rationale[key] = ctx[key]
+    elif trigger == "dns_thrash":
+        for key in ("domain", "query_count", "threshold"):
+            if key in ctx:
+                rationale[key] = ctx[key]
+    return rationale
 
 
 def _dispatch_mechanism(resolved: str) -> str:
@@ -63,6 +142,10 @@ class Actor:
         # In-flight kick bookkeeping: the BTM->deauth fallback map (ADR-0003 AC-4)
         # and the post-kick roam-check map (ADR-0003 AC-6). See pending.py.
         self.pending = PendingKicks()
+        # ADR-0015: per-MAC wall-clock of the last persisted dry-run row, to throttle
+        # would-kick writes to the first-cooldown interval. In-memory by design — a
+        # restart re-arming one extra row per MAC is harmless.
+        self._dry_run_last_write: dict[str, float] = {}
 
     async def handle(self, client: Any, thresholds: dict[str, Any]) -> None:
         mac = client.mac
@@ -82,6 +165,12 @@ class Actor:
         # decision dict carries no 'trigger', so an RF flag defaults to 'rf';
         # inactivity/dns paths tag their dict explicitly.
         trigger = thresholds.get("trigger", "rf")
+        # ADR-0015: snapshot *why* this kick fired, once, frozen at decision time.
+        # The dict feeds the log lines; the JSON string is serialized onto every
+        # kick_events row this call writes (fresh, fallback, dry-run) so the audit
+        # trail survives later config edits.
+        rationale = build_kick_rationale(client, thresholds, self.config)
+        rationale_json = json.dumps(rationale)
 
         if self.config.scanner.dry_run:
             logger.info(
@@ -91,8 +180,26 @@ class Actor:
                     "thresholds": thresholds,
                     "reason": reason,
                     "mechanism": sent_mechanism,
+                    "rationale": rationale,
                 },
             )
+            # ADR-0015: persist the would-kick with its rationale so a dry-run soak
+            # is reviewable in the UI, throttled per-MAC to the first-cooldown
+            # interval (the dry-run path returns before backoff, so without this a
+            # permanently-bad client would write one row every scan cycle).
+            cooldowns = tuple(self.config.backoff.cooldowns_seconds)
+            interval = cooldowns[0] if cooldowns else _DRY_RUN_DEFAULT_THROTTLE_SECONDS
+            now = self.wall_now_fn()
+            last = self._dry_run_last_write.get(mac)
+            if last is None or now - last >= interval:
+                self._dry_run_last_write[mac] = now
+                await self.db.insert_kick(
+                    mac=mac,
+                    dry_run=True,
+                    mechanism=sent_mechanism,
+                    trigger=trigger,
+                    rationale=rationale_json,
+                )
             return
 
         if self.backoff is not None and self.backoff.should_quarantine(mac):
@@ -222,12 +329,25 @@ class Actor:
             mechanism=sent_mechanism,
             attempt_group=attempt_group,
             trigger=trigger,
+            rationale=rationale_json,
         )
         self.pending.set_outcome(
             mac,
             ap_id=client.ap_id,
             mechanism=sent_mechanism,
             attempt_group=attempt_group,
+        )
+        # ADR-0015: a live kick now explains itself in the logs too, closing the
+        # asymmetry where only the dry-run path logged its reasoning.
+        logger.info(
+            "kick",
+            extra={
+                "mac": mac,
+                "mechanism": sent_mechanism,
+                "trigger": trigger,
+                "attempt_group": attempt_group,
+                "rationale": rationale,
+            },
         )
         if self.ha is not None:
             await self.ha.notify(mac, severity="kick")
