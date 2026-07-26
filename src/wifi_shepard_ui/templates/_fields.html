@@ -1,0 +1,28 @@
+{# Shared field-control rendering for every schema-driven form (ADR-0013 settings page,
+   ADR-0014 per-device card). `attr` is the data-* attribute name the page's collector
+   reads, `key` its value — so the same control serves `data-path`, `data-leaf`, and
+   `data-device-leaf` without the field metadata being written down twice. #}
+{% macro control(f, value, attr, key) %}
+  {%- if f.kind == "bool" -%}
+    <input type="checkbox" {{ attr }}="{{ key }}"{% if value %} checked{% endif %}>
+  {%- elif f.kind == "enum" -%}
+    <select {{ attr }}="{{ key }}">
+      {%- if f.default is none %}<option value="">(inherit global)</option>{% endif -%}
+      {%- for c in f.choices -%}
+        <option value="{{ c }}"{% if value is not none and value|string == c %} selected{% endif %}>{{ c }}</option>
+      {%- endfor -%}
+    </select>
+  {%- elif f.kind in ("int", "int_or_null") -%}
+    <input type="number" {{ attr }}="{{ key }}"
+      value="{{ '' if value in (none, '') else value }}"
+      {% if f.minimum is not none %}min="{{ f.minimum }}"{% endif %}
+      {% if f.maximum is not none %}max="{{ f.maximum }}"{% endif %}
+      {% if f.kind == "int_or_null" %}placeholder="{{ 'disabled' if f.blank_writes_null else 'inherit / keep' }}"{% endif %}>
+  {%- elif f.kind == "secret_ref" -%}
+    <input type="text" {{ attr }}="{{ key }}" value="{{ value or '' }}" placeholder="ENV_VAR_NAME" autocomplete="off" spellcheck="false">
+  {%- else -%}
+    <input type="text" {{ attr }}="{{ key }}" value="{{ '' if value in (none,) else value }}"
+      {% if f.kind == "time_hhmm" %}placeholder="HH:MM"{% endif %}
+      {% if f.kind == "mac" %}placeholder="aa:bb:cc:dd:ee:ff"{% endif %}>
+  {%- endif -%}
+{% endmacro %}

@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import os
 import re
+from io import StringIO
 from pathlib import Path
 from typing import Any
 
@@ -67,7 +68,7 @@ def _env_name(value: Any) -> str:
 # --------------------------------------------------------------------------- reading
 
 
-def _read_raw(path: Path) -> dict[str, Any]:
+def read_raw(path: Path) -> dict[str, Any]:
     """Load config.yaml as a plain dict WITHOUT interpolating ``${VAR}`` (so secret
     placeholders stay intact). Missing/empty file -> {} (fresh-deploy empty state)."""
     try:
@@ -140,7 +141,7 @@ def read_allowlist(path: Path) -> set[str]:
     """The allowlist MACs from config.yaml, lowercased for the UI's case-insensitive
     match (ADR-0013 AC-8 — the authoritative list, replacing the old parallel env).
     Missing file / no allowlist -> empty set."""
-    raw = _read_raw(path)
+    raw = read_raw(path)
     entries = raw.get("allowlist")
     if not isinstance(entries, list):
         return set()
@@ -149,7 +150,7 @@ def read_allowlist(path: Path) -> set[str]:
 
 def read_form_model(path: Path) -> dict[str, Any]:
     """Build the pre-fill model the settings template renders from (AC-2/AC-3/AC-10)."""
-    raw = _read_raw(path)
+    raw = read_raw(path)
 
     scalars: dict[str, Any] = {}
     for f in _scalar_fields():
@@ -206,14 +207,14 @@ class CoercionError(ValueError):
     """A submitted value can't be coerced to the field's type (bad int, etc.)."""
 
 
-def _coerce_scalar(field: ss.FieldSpec, value: Any) -> Any:
+def coerce_scalar(field: ss.FieldSpec, value: Any) -> Any:
     """Coerce a raw submitted value to the Python type the config loader expects,
-    or a sentinel ``_OMIT`` to drop the key. Raises CoercionError on a bad number."""
+    or a sentinel ``OMIT`` to drop the key. Raises CoercionError on a bad number."""
     kind = field.kind
     if kind is ss.Kind.SECRET_REF:
         name = str(value).strip() if value is not None else ""
         if not name:
-            return _OMIT
+            return OMIT
         if not re.fullmatch(r"[A-Z_][A-Z0-9_]*", name):
             raise CoercionError(
                 f"{field.path}: '{name}' is not a valid environment variable name "
@@ -225,21 +226,21 @@ def _coerce_scalar(field: ss.FieldSpec, value: Any) -> Any:
     if kind in (ss.Kind.INT, ss.Kind.INT_OR_NULL):
         if value is None or (isinstance(value, str) and value.strip() == ""):
             if kind is ss.Kind.INT_OR_NULL:
-                return None if field.blank_writes_null else _OMIT
-            return _OMIT  # a blank plain-int field: leave the loader's default
+                return None if field.blank_writes_null else OMIT
+            return OMIT  # a blank plain-int field: leave the loader's default
         try:
             return int(str(value).strip())
         except ValueError as exc:
             raise CoercionError(f"{field.path}: '{value}' is not a whole number") from exc
     if kind is ss.Kind.ENUM:
         s = str(value).strip() if value is not None else ""
-        return s if s else _OMIT
+        return s if s else OMIT
     # STRING / MAC / TIME_HHMM / TIMEZONE
     s = str(value).strip() if value is not None else ""
     # A required string is kept even when empty so build_config raises its own clear
     # "is required" error; an optional one is dropped.
     if not s and not _string_required(field):
-        return _OMIT
+        return OMIT
     if s and kind in (ss.Kind.TIME_HHMM, ss.Kind.MAC):
         # Force-quote on write: pyyaml (the daemon's YAML-1.1 reader) parses an
         # unquoted "23:00" as the sexagesimal int 1380, and an all-numeric MAC as a
@@ -249,7 +250,7 @@ def _coerce_scalar(field: ss.FieldSpec, value: Any) -> Any:
     return s
 
 
-_OMIT = object()
+OMIT = object()
 
 _REQUIRED_STRING_PATHS: frozenset[str] = frozenset(
     {
@@ -293,7 +294,7 @@ def _coerce_list(field: ss.FieldSpec, values: Any) -> list[Any]:
 
 
 def _set_path(mapping: dict[str, Any], dotted: str, value: Any) -> None:
-    if value is _OMIT:
+    if value is OMIT:
         return
     node = mapping
     parts = dotted.split(".")
@@ -310,8 +311,8 @@ def _build_item(prefix: str, row: dict[str, Any], nested: tuple[str, str] | None
         leaf = f.path[len(prefix) :]
         if "[]" in leaf:
             continue
-        coerced = _coerce_scalar(f, row.get(leaf))
-        if coerced is not _OMIT:
+        coerced = coerce_scalar(f, row.get(leaf))
+        if coerced is not OMIT:
             item[leaf] = coerced
     if nested is not None:
         nested_key, nested_prefix = nested
@@ -335,7 +336,7 @@ def build_mapping(payload: dict[str, Any]) -> dict[str, Any]:
     mapping: dict[str, Any] = {}
 
     for f in _scalar_fields():
-        _set_path(mapping, f.yaml_path or f.path, _coerce_scalar(f, scalars.get(f.path)))
+        _set_path(mapping, f.yaml_path or f.path, coerce_scalar(f, scalars.get(f.path)))
 
     for f in _scalar_list_fields():
         _set_path(mapping, f.path, _coerce_list(f, scalar_lists.get(f.path)))
@@ -410,18 +411,87 @@ def validate_mapping(mapping: dict[str, Any]) -> None:
 # --------------------------------------------------------------------------- writing
 
 
+# Detecting how the operator indents block sequences. ruamel has no per-file style
+# memory: whatever indent we set is applied to EVERY sequence it emits, so guessing
+# wrong reindents lists the edit never touched.
+#
+# Only TOP-LEVEL sequences are measured. A nested one (`detection.inactivity.macs`)
+# carries its parents' indentation in its column, so reading that as the offset would
+# over-indent every list in the file.
+_TOP_LEVEL_KEY_RE = re.compile(r"^[A-Za-z_][\w.-]*:[ \t]*(#.*)?$")
+_SEQ_ITEM_RE = re.compile(r"^( *)- ")
+_SKIPPABLE_RE = re.compile(r"^[ \t]*(#.*)?$")  # blank line or whole-line comment
+
+# Fallback for a file with no top-level block sequence yet (or a brand-new one): the
+# style config.example.yaml is written in.
+_DEFAULT_SEQ_OFFSET = 2
+
+
+def _detect_sequence_offset(source: str) -> int:
+    """How far the file indents block-sequence items under a top-level key.
+
+    Both common styles then round-trip unchanged: 0 (`- item` at the parent's column)
+    and 2 (`  - item`). A file with no top-level sequence gets the repo's own style.
+    """
+    after_top_level_key = False
+    for line in source.splitlines():
+        if _SKIPPABLE_RE.match(line):
+            continue
+        if after_top_level_key:
+            item = _SEQ_ITEM_RE.match(line)
+            if item:
+                return len(item.group(1))
+        after_top_level_key = bool(_TOP_LEVEL_KEY_RE.match(line))
+    return _DEFAULT_SEQ_OFFSET
+
+
+def round_trip_yaml(source: str = "") -> YAML:
+    """The shared ruamel configuration — preserves comments, key order, and quoting.
+    Used by both writers (whole-file settings save and per-device edits, ADR-0014).
+
+    Pass the file's current text so the emitted sequence indentation matches what is
+    already there; omit it for a new file.
+    """
+    yaml_rt = YAML()
+    yaml_rt.preserve_quotes = True
+    yaml_rt.width = 4096  # don't line-wrap long scalars (URLs, descriptions)
+    offset = _detect_sequence_offset(source)
+    yaml_rt.indent(mapping=2, sequence=offset + 2, offset=offset)
+    return yaml_rt
+
+
+def dump_to_string(doc: Any, yaml_rt: YAML) -> str:
+    """Serialize a (possibly comment-carrying) document to YAML text.
+
+    The emitter is required, not defaulted: it carries the sequence indentation read
+    off the file being rewritten, and silently falling back to the repo's default style
+    is exactly how an edit reindents lists it never touched.
+    """
+    buf = StringIO()
+    yaml_rt.dump(doc, buf)
+    return buf.getvalue()
+
+
+def write_text_atomic(path: Path, text: str) -> None:
+    """Temp file + rename, so a crashed write never leaves a truncated config the
+    daemon might reload."""
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(text)
+    os.replace(tmp, path)
+
+
 def write_config(path: Path, mapping: dict[str, Any]) -> None:
     """Atomically write the mapping to config.yaml, preserving comments / key order /
     ``${VAR}`` placeholders of an existing file (AC-5). A managed section absent from
     the mapping is removed; unmanaged operator keys are left untouched.
     """
-    yaml_rt = YAML()
-    yaml_rt.preserve_quotes = True
-    yaml_rt.width = 4096  # don't line-wrap long scalars (URLs, descriptions)
+    existing = path.read_text() if path.exists() else ""
+    # Seed the emitter from the file's own list style so untouched sequences keep
+    # the indentation the operator wrote.
+    yaml_rt = round_trip_yaml(existing)
 
-    if path.exists():
-        with path.open("r") as fh:
-            doc = yaml_rt.load(fh)
+    if existing:
+        doc = yaml_rt.load(existing)
         if not isinstance(doc, CommentedMap):
             doc = CommentedMap()
         _overlay(doc, mapping)
@@ -431,10 +501,7 @@ def write_config(path: Path, mapping: dict[str, Any]) -> None:
     else:
         doc = mapping
 
-    tmp = path.with_name(path.name + ".tmp")
-    with tmp.open("w") as fh:
-        yaml_rt.dump(doc, fh)
-    os.replace(tmp, path)
+    write_text_atomic(path, dump_to_string(doc, yaml_rt))
 
 
 def _overlay(dst: Any, src: dict[str, Any]) -> None:

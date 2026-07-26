@@ -72,8 +72,23 @@ def test_ac_1_every_config_field_is_covered_or_excluded():
 def test_ac_1_schema_has_no_bogus_paths():
     leaves = set(_leaf_paths(Config))
     covered = set(ss.covered_paths())
-    bogus = covered - leaves
-    assert not bogus, f"schema describes paths that don't exist in Config: {sorted(bogus)}"
+    bogus = covered - leaves - set(ss.COSMETIC_PATHS)
+    assert not bogus, (
+        "schema describes paths that don't exist in Config (add to COSMETIC_PATHS only if "
+        f"the daemon deliberately ignores them): {sorted(bogus)}"
+    )
+
+
+def test_ac_1_cosmetic_paths_are_real_fields_absent_from_config():
+    """ADR-0014's converse assertion: a cosmetic path must be a real editable field AND
+    genuinely absent from Config — otherwise it belongs in the normal coverage check."""
+    leaves = set(_leaf_paths(Config))
+    covered = set(ss.covered_paths())
+    for path in ss.COSMETIC_PATHS:
+        assert path in covered, f"COSMETIC_PATHS lists {path}, which has no FieldSpec"
+        assert path not in leaves, (
+            f"{path} exists in Config — drop it from COSMETIC_PATHS so it is covered normally"
+        )
 
 
 def test_ac_1_excluded_paths_are_real_leaves():

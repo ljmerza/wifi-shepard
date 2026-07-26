@@ -1,7 +1,7 @@
-"""ADR-0002 AC-6, as amended by ADR-0013: src/wifi_shepard_ui/ contains no write-route
-decorators EXCEPT the single settings save route (`@app.post("/settings")`). Every other
-route stays GET-only — the read-only guarantee is narrowed to a one-path allowlist, not
-lifted.
+"""ADR-0002 AC-6, as amended by ADR-0013 and ADR-0014: src/wifi_shepard_ui/ contains no
+write-route decorators EXCEPT the settings save (`@app.post("/settings")`) and the
+per-device save (`@app.post("/devices/{mac}/settings")`). Every other route stays
+GET-only — the read-only guarantee is narrowed to a two-path allowlist, not lifted.
 """
 
 from __future__ import annotations
@@ -22,8 +22,11 @@ WRITE_VERB_RE = re.compile(
 
 GET_VERB_RE = re.compile(r"@[A-Za-z_]\w*\.get\s*\(")
 
-# The one write route ADR-0013 permits: the settings save endpoint.
-ALLOWED_WRITE_RE = re.compile(r"""@[A-Za-z_]\w*\.post\s*\(\s*["']/settings["']\s*\)""")
+# The write routes the ADRs permit: the ADR-0013 settings save, and the ADR-0014
+# per-device save. Anything else is still a violation.
+ALLOWED_WRITE_RE = re.compile(
+    r"""@[A-Za-z_]\w*\.post\s*\(\s*["'](/settings|/devices/\{mac\}/settings)["']\s*\)"""
+)
 
 
 def test_ac_6_only_settings_write_route_in_ui_source() -> None:
@@ -49,8 +52,8 @@ def test_ac_6_only_settings_write_route_in_ui_source() -> None:
     )
 
     assert not write_matches, (
-        "sidecar must be read-only outside the settings save route — found other "
-        "write-route decorators:\n  " + "\n  ".join(write_matches)
+        "sidecar must be read-only outside the settings and per-device save routes — "
+        "found other write-route decorators:\n  " + "\n  ".join(write_matches)
     )
 
     # Guards against this test silently going stale: the amended allowlist route
