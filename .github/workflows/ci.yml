@@ -11,7 +11,7 @@ jobs:
   tests:
     permissions:
       contents: read
-    uses: ljmerza/misc-actions/.github/workflows/python-tests.yml@v2
+    uses: ljmerza/misc-actions/.github/workflows/python-tests.yml@v2.1.0
     with:
       python-version: "3.12"
       coverage-source: wifi_shepard,wifi_shepard_ui
@@ -22,7 +22,7 @@ jobs:
     permissions:
       contents: read
       packages: write
-    uses: ljmerza/misc-actions/.github/workflows/docker-ci.yml@v2
+    uses: ljmerza/misc-actions/.github/workflows/docker-ci.yml@v2.1.0
     with:
       image-name: ghcr.io/${{ github.repository_owner }}/wifi-shepard
     secrets: inherit
@@ -36,7 +36,7 @@ jobs:
       packages: write
     steps:
       - uses: actions/checkout@v6
-      - uses: ljmerza/misc-actions/actions/docker-build-push@v1
+      - uses: ljmerza/misc-actions/actions/docker-build-push@v2.1.0
         with:
           image-name: ghcr.io/${{ github.repository_owner }}/wifi-shepard-ui
           dockerfile: Dockerfile.ui
