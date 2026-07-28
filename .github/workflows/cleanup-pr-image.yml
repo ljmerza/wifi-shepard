@@ -9,7 +9,7 @@ jobs:
     permissions:
       contents: read
       packages: write
-    uses: ljmerza/misc-actions/.github/workflows/cleanup-pr-image.yml@v2
+    uses: ljmerza/misc-actions/.github/workflows/cleanup-pr-image.yml@v2.1.0
     with:
       package-name: wifi-shepard
     secrets: inherit
@@ -18,7 +18,7 @@ jobs:
     permissions:
       contents: read
       packages: write
-    uses: ljmerza/misc-actions/.github/workflows/cleanup-pr-image.yml@v2
+    uses: ljmerza/misc-actions/.github/workflows/cleanup-pr-image.yml@v2.1.0
     with:
       package-name: wifi-shepard-ui
     secrets: inherit
