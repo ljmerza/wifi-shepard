@@ -182,6 +182,10 @@
   .nowrap { white-space: nowrap; }
   tr.dry { color: var(--fg-muted); }
 
+  /* ---- "why" cell (devices list + device timeline, _why.html) ---- */
+  .why-list { margin: 0.25rem 0 0; padding-left: 1.1rem; }
+  .why-list li { margin: 0.1rem 0; }
+
   /* Rows sharing an attempt_group read as one logical kick (ADR-0003 AC-7):
      tint them and hang a rule down the left edge to bracket the pair. */
   tr[data-attempt-group] td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
@@ -321,6 +325,10 @@
       flex: 0 0 auto;
     }
     td:empty { display: none; }
+    /* The why cell holds multi-line content — stack it instead of the
+       space-between row above, which shoves the bullets against the right edge. */
+    td.why { flex-direction: column; align-items: flex-start; gap: 0.15rem; text-align: left; }
+    td.why .why-detail { width: 100%; }
     tr[data-attempt-group] td:first-child { box-shadow: none; }
     tr[data-attempt-group] { border-left: 3px solid var(--accent); }
 

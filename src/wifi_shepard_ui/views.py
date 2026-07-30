@@ -80,6 +80,9 @@ class DeviceRow:
     state: str
     allowlisted: bool
     name: str | None = None  # latest controller-reported name/hostname, if any
+    # ADR-0015: parsed rationale of the newest real kick (None if never kicked,
+    # NULL/malformed, or the daemon predates the rationale column).
+    last_kick_rationale: dict | None = None
 
 
 @dataclass(frozen=True)
@@ -285,6 +288,19 @@ def list_devices(
     except sqlite3.OperationalError:
         names = {}
 
+    # Newest real kick's parsed rationale per MAC — the devices table's "Why"
+    # column (ADR-0015). Fail-soft like `names`: on a daemon DB that predates
+    # the rationale migration the column renders as dashes, not a 500.
+    rationales: dict[str, dict | None] = {}
+    try:
+        for mac, raw in conn.execute(
+            "SELECT mac, rationale FROM kick_events "
+            "WHERE id IN (SELECT MAX(id) FROM kick_events WHERE dry_run = 0 GROUP BY mac)"
+        ):
+            rationales[mac] = _load_rationale(raw)
+    except sqlite3.OperationalError:
+        rationales = {}
+
     allowlist_norm = {m.lower() for m in allowlist}
     rows: list[DeviceRow] = []
     for mac in sorted(set(kicks) | set(samples)):
@@ -303,6 +319,7 @@ def list_devices(
                 state=derive_state(kick_count=n_kicks, last_kick_ts=last_kick_ts, now=now),
                 allowlisted=mac.lower() in allowlist_norm,
                 name=names.get(mac),
+                last_kick_rationale=rationales.get(mac),
             )
         )
     return rows
