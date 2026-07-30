@@ -1,0 +1,25 @@
+{# Shared "why" cell body (ADR-0015): one-line plain-English summary plus an
+   expandable observed-vs-threshold breakdown, fed a parsed kick_events.rationale
+   dict. Used by the /devices/{mac} timeline (per-kick) and the /devices list
+   (newest real kick) so the two surfaces can't drift apart. #}
+{% macro why(rationale) -%}
+  {%- if rationale -%}
+  <span class="why-summary">{{ rationale | kick_why }}</span>
+  {%- set o = rationale.observed -%}
+  {%- set t = rationale.thresholds -%}
+  <details class="why-detail">
+    <summary>details</summary>
+    <ul class="why-list">
+      {%- if o -%}
+      {%- if 'signal_dbm_max' in (t or {}) %}<li>signal {{ o.signal }} dBm / limit {{ t.signal_dbm_max }}</li>{% endif -%}
+      {%- if 'tx_rate_kbps_max' in (t or {}) %}<li>tx rate {{ o.tx_rate_kbps }} kbps / limit {{ t.tx_rate_kbps_max }}</li>{% endif -%}
+      {%- if 'retry_pct_max' in (t or {}) %}<li>retries {{ o.retry_pct }}% / limit {{ t.retry_pct_max }}%</li>{% endif -%}
+      {%- if 'ap_cu_total_min' in (t or {}) %}<li>AP util {{ o.ap_cu_total }}% / floor {{ t.ap_cu_total_min }}%</li>{% endif -%}
+      {%- endif -%}
+      {%- if rationale.trigger == 'inactivity' %}<li>{{ rationale.window_bytes }} bytes over {{ rationale.window_samples }} samples / min {{ rationale.min_bytes_per_window }}</li>{% endif -%}
+      {%- if rationale.trigger == 'dns_thrash' %}<li>{{ rationale.query_count }} queries to {{ rationale.domain }} / limit {{ rationale.threshold }}</li>{% endif -%}
+      {%- if rationale.quiet_hours %}<li>quiet-hours thresholds applied</li>{% endif -%}
+    </ul>
+  </details>
+  {%- else -%}—{%- endif -%}
+{%- endmacro %}

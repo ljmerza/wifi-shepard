@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% from "_fields.html" import control %}
+{% from "_why.html" import why %}
 {% block title %}{{ mac }} — wifi-shepard{% endblock %}
 
 {% block head_extra %}
@@ -102,27 +103,7 @@
           </td>
           <td data-label="Mechanism" class="mechanism">{% if ev.mechanism %}<span class="badge badge-neutral">{{ ev.mechanism }}</span>{% endif %}</td>
           <td data-label="Attempt group" class="attempt-group group-id" title="{{ ev.attempt_group or '' }}">{% if ev.attempt_group %}{{ ev.attempt_group[:8] }}…{% endif %}</td>
-          <td data-label="Why" class="why">
-            {%- if ev.rationale -%}
-            <span class="why-summary">{{ ev.rationale | kick_why }}</span>
-            {%- set o = ev.rationale.observed -%}
-            {%- set t = ev.rationale.thresholds -%}
-            <details class="why-detail">
-              <summary>details</summary>
-              <ul class="why-list">
-                {%- if o -%}
-                {%- if 'signal_dbm_max' in (t or {}) %}<li>signal {{ o.signal }} dBm / limit {{ t.signal_dbm_max }}</li>{% endif -%}
-                {%- if 'tx_rate_kbps_max' in (t or {}) %}<li>tx rate {{ o.tx_rate_kbps }} kbps / limit {{ t.tx_rate_kbps_max }}</li>{% endif -%}
-                {%- if 'retry_pct_max' in (t or {}) %}<li>retries {{ o.retry_pct }}% / limit {{ t.retry_pct_max }}%</li>{% endif -%}
-                {%- if 'ap_cu_total_min' in (t or {}) %}<li>AP util {{ o.ap_cu_total }}% / floor {{ t.ap_cu_total_min }}%</li>{% endif -%}
-                {%- endif -%}
-                {%- if ev.rationale.trigger == 'inactivity' %}<li>{{ ev.rationale.window_bytes }} bytes over {{ ev.rationale.window_samples }} samples / min {{ ev.rationale.min_bytes_per_window }}</li>{% endif -%}
-                {%- if ev.rationale.trigger == 'dns_thrash' %}<li>{{ ev.rationale.query_count }} queries to {{ ev.rationale.domain }} / limit {{ ev.rationale.threshold }}</li>{% endif -%}
-                {%- if ev.rationale.quiet_hours %}<li>quiet-hours thresholds applied</li>{% endif -%}
-              </ul>
-            </details>
-            {%- else -%}—{%- endif -%}
-          </td>
+          <td data-label="Why" class="why">{{ why(ev.rationale) }}</td>
           <td data-label="Detail" class="mono muted">{{ ev.detail }}</td>
         </tr>
         {% endfor %}
