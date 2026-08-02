@@ -114,3 +114,9 @@ ADRs live in [`docs/adr/`](./docs/adr/). The index is
 Cut a release: `git tag vX.Y.Z && git push --tags`, then create a GitHub
 Release pointing at the tag — both images publish under `vX.Y.Z` and
 `latest`.
+
+---
+
+Enjoy my work? Help me out for a couple of :beers: or a :coffee:!
+
+<a href="https://www.buymeacoffee.com/JMISm06AD"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" height="41" width="174"></a>
