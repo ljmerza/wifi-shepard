@@ -1,5 +1,15 @@
 # wifi-shepard
 
+<p align="center">
+<img src="https://img.shields.io/github/stars/ljmerza/wifi-shepard?style=for-the-badge&label=Stars&color=orange" alt="Stars">
+<a href="https://github.com/ljmerza/wifi-shepard/releases/latest"><img src="https://img.shields.io/github/v/release/ljmerza/wifi-shepard?style=for-the-badge&color=purple" alt="Version"></a>
+<a href="https://github.com/ljmerza/wifi-shepard/actions/workflows/release.yml"><img src="https://img.shields.io/github/actions/workflow/status/ljmerza/wifi-shepard/release.yml?style=for-the-badge&label=Build" alt="Build"></a>
+</p>
+
+<p align="center">
+<a href="https://www.buymeacoffee.com/JMISm06AD"><img src="https://img.shields.io/badge/Buy%20Me%20A%20Coffee-FFDD00?style=for-the-badge&logo=buy-me-a-coffee&logoColor=black" alt="Buy Me A Coffee"></a>
+</p>
+
 A long-running Docker daemon that watches a wireless network and gently
 re-roams misbehaving clients so cheap IoT (Espressif WLEDs, smart plugs,
 off-brand cameras) stop monopolizing 2.4 GHz airtime by clinging to the wrong AP.
@@ -114,9 +124,3 @@ ADRs live in [`docs/adr/`](./docs/adr/). The index is
 Cut a release: `git tag vX.Y.Z && git push --tags`, then create a GitHub
 Release pointing at the tag — both images publish under `vX.Y.Z` and
 `latest`.
-
----
-
-Enjoy my work? Help me out for a couple of :beers: or a :coffee:!
-
-<a href="https://www.buymeacoffee.com/JMISm06AD"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" height="41" width="174"></a>
